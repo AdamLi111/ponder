@@ -1,3 +1,3 @@
-Steps to run
+# Steps to run
 
-Activate the venv
+follow the steps in the python sdk to set up, robot must be on same wifi connection
