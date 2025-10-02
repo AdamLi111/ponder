@@ -1,5 +1,5 @@
-from mistyPy.Robot import Robot
-from mistyPy.Events import Events
+from PythonSDKmain.mistyPy.Robot import Robot
+from PythonSDKmain.mistyPy.Events import Events
 import time
 import re
 import speech_recognition as sr
@@ -18,10 +18,35 @@ def process_voice_command(command):
     # Calculate drive time (approximate: 0.5 meters per second at speed 50)
     drive_time_ms = int((distance / 0.5) * 1000)
     
-    if 'forward' in command in command:
+    if 'forward' in command or 'ahead' in command:
         print(f"Moving forward {distance} meter(s)")
         misty.speak(f"Moving forward {distance} meters")
         misty.drive_time(50, 0, drive_time_ms)
+        
+    elif 'backward' in command or 'back' in command:
+        print(f"Moving backward {distance} meter(s)")
+        misty.speak(f"Moving backward {distance} meters")
+        misty.drive_time(-50, 0, drive_time_ms)
+        
+    elif 'left' in command:
+        print(f"Going left {distance} meter(s)")
+        misty.speak(f"Going left {distance} meters")
+        misty.drive_time(0, -50, 1000)
+        time.sleep(1.5)
+        misty.drive_time(50, 0, drive_time_ms)
+        
+    elif 'right' in command:
+        print(f"Going right {distance} meter(s)")
+        misty.speak(f"Going right {distance} meters")
+        misty.drive_time(0, 50, 1000)
+        time.sleep(1.5)
+        misty.drive_time(50, 0, drive_time_ms)
+        
+    elif 'stop' in command:
+        print("Stopping")
+        misty.speak("Stopping")
+        misty.stop()
+        
     else:
         print("Command not recognized")
         misty.speak("Sorry, I didn't understand that command")
@@ -157,8 +182,11 @@ if __name__ == "__main__":
     
     print("\n" + "="*50)
     print("Misty is ready!")
-    print("Testing feasibility, currently only support the following command:")
+    print("Say 'Hey Misty' then give a command like:")
     print("  - 'move forward 1 meter'")
+    print("  - 'go left 2 meters'")
+    print("  - 'go right 1 meter'")
+    print("  - 'move backward 1 meter'")
     print("="*50 + "\n")
     
     misty.keep_alive()
