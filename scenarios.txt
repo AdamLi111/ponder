@@ -1,0 +1,22 @@
+1. books:
+    User: Hey Misty, do you see my book on the desk?
+    Misty: I see three books, one of them is blue, one is red, the other one is white. Does the book you are looking for has one of those colors?
+    User: Yes. I was looking for the blue one. Thank you.
+
+2. obstacle:
+    User: Hey Misty, move forward 3 meters.
+    Misty: I see an obstacle in front of me. Should I go left or right to avoid it, or should I stop right in front of it?
+    User: Stop in front of it.
+    Misty: Got it. [Executing Commands]
+
+3. plant:
+    User: Hey Misty, check on the plant. How is it?
+    Misty: Which plant are you referring to?
+    User: The one on the right.
+    Misty: That one looks good.
+
+4. plugs:
+    User: Hey Misty, did I unplug the power for my laptop?
+    Misty: I see there's three plugs, which one is for your laptop?
+    User: The one on the right.
+    Misty: That is still plugged in.
