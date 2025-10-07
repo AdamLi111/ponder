@@ -7,14 +7,14 @@ import os
 misty = Robot("172.20.10.2")
 
 # Modify the name for differnet output
-saved_name = "test"
+saved_name = "box"
 
 # move head to face forward
-misty.move_head(0, 0, 0)
+misty.move_head(10, 0, 0)
 time.sleep(2)
 
 # Take a photo and save it on Misty
-result = misty.take_picture(base64=True, fileName="myportrait", width=3200,height= 2400,displayOnScreen=False,overwriteExisting=True)
+result = misty.take_picture(base64=True, fileName=f'{saved_name}', width=3200,height= 2400,displayOnScreen=False,overwriteExisting=True)
 print(f"Photo saved as: {result}")
 
 # Extract the filename from the response
