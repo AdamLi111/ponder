@@ -7,10 +7,10 @@ import os
 misty = Robot("172.20.10.2")
 
 # Modify the name for differnet output
-saved_name = "box"
+saved_name = "trash"
 
 # move head to face forward
-misty.move_head(10, 0, 0)
+misty.move_head(40, 0, 0)
 time.sleep(2)
 
 # Take a photo and save it on Misty
