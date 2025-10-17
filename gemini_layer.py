@@ -1,18 +1,98 @@
 from PythonSDKmain.mistyPy.Robot import Robot
 from PythonSDKmain.mistyPy.Events import Events
 import time
-import re
 import speech_recognition as sr
 import requests
 from io import BytesIO
 from google import genai
 import json
+import os
+import base64
+
+# Get free API key from: https://aistudio.google.com/apikey
+client = genai.Client(api_key="AIzaSyDmIcNnlfYB39w4W2d76hq3C1nGI9sdmK0")
 
 # TEST MODE: Set to 1 to type commands instead of using voice
 TEST_MODE = 1  # Change to 0 for normal voice mode
 
-# Initialize Gemini client
-client = genai.Client(api_key="AIzaSyDmIcNnlfYB39w4W2d76hq3C1nGI9sdmK0")
+def capture_and_describe_vision():
+    """Capture what Misty sees and get description from Gemini"""
+    print("Capturing image from Misty's camera...")
+    
+    try:
+        # Move head to face forward
+        misty.move_head(40, 0, 0)
+        time.sleep(2)
+        
+        # Take a photo
+        result = misty.take_picture(
+            base64=True, 
+            fileName='vision_temp',
+            width=1600,
+            height=1200,
+            displayOnScreen=False,
+            overwriteExisting=True
+        )
+        
+        # Extract filename from response
+        if hasattr(result, 'json'):
+            response_data = result.json()
+        elif hasattr(result, 'text'):
+            response_data = json.loads(result.text)
+        else:
+            response_data = result
+        
+        if 'result' in response_data:
+            filename = response_data['result']['name']
+        else:
+            filename = response_data.get('name')
+        
+        print(f"Image captured: {filename}")
+        
+        # Download the image
+        image_url = f"http://{ip_address}/api/images?FileName={filename}"
+        response = requests.get(image_url)
+        
+        if response.status_code == 200:
+            # Save temporarily
+            os.makedirs('temp_images', exist_ok=True)
+            temp_path = 'temp_images/current_view.jpg'
+            with open(temp_path, 'wb') as f:
+                f.write(response.content)
+            
+            print("Analyzing image with Gemini...")
+            
+            # Read image and encode to base64
+            with open(temp_path, 'rb') as f:
+                image_data = base64.b64encode(f.read()).decode('utf-8')
+            
+            # Send to Gemini for description
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=[
+                    "Describe what you see in this image in 2-3 sentences. Be specific about objects, people, and the setting.",
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": image_data
+                        }
+                    }
+                ]
+            )
+            
+            description = response.text.strip()
+            print(f"Vision description: {description}")
+            
+            return description
+        else:
+            print(f"Failed to download image: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        print(f"Error in vision capture: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def parse_intent_with_llm(user_speech):
     """Use Gemini to parse user's actual intent from their speech"""
@@ -26,23 +106,30 @@ Analyze what the user says and extract their FINAL intent.
 
 Rules:
 1. If the user corrects themselves, only return the final corrected command
-2. Extract the direction (forward, backward, left, right, stop)
-3. Extract the distance in meters (default to 1 if not specified)
+2. Extract the action type: forward, backward, left, right, stop, describe_vision, or unknown
+3. Extract the distance in meters (default to 1 if not specified, 0 for non-movement commands)
 4. Return ONLY a JSON object with 'action' and 'distance' fields
-5. If unclear or not a movement command, return {{"action": "unknown", "distance": 0}}
+5. If unclear or not a valid command, return {{"action": "unknown", "distance": 0}}
 
-Examples:
+Movement Examples:
 - "move forward 2 meters" -> {{"action": "forward", "distance": 2}}
 - "go left" -> {{"action": "left", "distance": 1}}
 - "move forward one meter, wait no, go backward 2 meters" -> {{"action": "backward", "distance": 2}}
 - "stop" -> {{"action": "stop", "distance": 0}}
-- "hello how are you" -> {{"action": "unknown", "distance": 0}}
+
+Vision Examples:
+- "what do you see" -> {{"action": "describe_vision", "distance": 0}}
+- "describe what's in front of you" -> {{"action": "describe_vision", "distance": 0}}
+- "look and tell me what you see" -> {{"action": "describe_vision", "distance": 0}}
+- "take a picture and describe it" -> {{"action": "describe_vision", "distance": 0}}
 
 User said: "{user_speech}"
 
 Return only the JSON object, nothing else:"""
         )
         
+# provide templates
+
         llm_output = response.text.strip()
         print(f"LLM raw output: {llm_output}")
         
@@ -77,9 +164,25 @@ def process_voice_command(action, distance):
         misty.speak("Sorry, I didn't understand that command")
         return
     
+    # Handle vision commands
+    if action == 'describe_vision':
+        print("Processing vision request...")
+        misty.speak("Let me take a look")
+        description = capture_and_describe_vision()
+        
+        if description:
+            print(f"Speaking description: {description}")
+            misty.speak(description)
+        else:
+            misty.speak("Sorry, I couldn't capture or analyze the image")
+        return
+    
     # Calculate drive time (approximate: 0.5 meters per second at speed 50)
     drive_time_ms = int((distance / 0.5) * 1000)
     
+# action space:
+# speak, move
+
     if action == 'forward':
         print(f"Moving forward {distance} meter(s)")
         misty.speak(f"Moving forward {distance} meters")
@@ -221,8 +324,12 @@ def test_mode_loop():
     print("\n" + "="*50)
     print("TEST MODE ACTIVE - Type commands instead of speaking")
     print("Robot WILL execute movements based on your typed commands")
-    print("Using Google Gemini (free) for parsing")
+    print("Using Google Gemini (free) for parsing and vision")
     print("Type commands to test (or 'quit' to exit)")
+    print("="*50)
+    print("\nAvailable commands:")
+    print("  - Movement: 'move forward 1 meter', 'go left', 'stop'")
+    print("  - Vision: 'what do you see', 'describe what's in front of you'")
     print("="*50 + "\n")
     
     while True:
@@ -264,6 +371,7 @@ if __name__ == "__main__":
     misty.move_head(60, 0, 0, 80)
     misty.move_arms(85, 85, 80, 80)
     misty.change_led(0, 0, 255)
+    print("set up success")
     
     if TEST_MODE:
         # Test mode: Type commands, but robot still executes them
@@ -291,11 +399,11 @@ if __name__ == "__main__":
         )
         
         print("\n" + "="*50)
-        print("Misty is ready with LLM-powered intent parsing!")
+        print("Misty is ready with LLM-powered intent parsing and vision!")
         print("Say 'Hey Misty' then give a command like:")
         print("  - 'move forward 1 meter'")
-        print("  - 'go left 2 meters, wait no, go right 3 meters'")
-        print("  - 'move backward... actually move forward 1 meter'")
+        print("  - 'what do you see?'")
+        print("  - 'describe what's in front of you'")
         print("="*50 + "\n")
         
         misty.keep_alive()
