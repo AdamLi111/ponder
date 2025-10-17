@@ -8,7 +8,7 @@ from io import BytesIO
 import json
 
 # TEST MODE: Set to 1 to type commands instead of using voice
-TEST_MODE = 1  # Change to 0 for normal voice mode
+TEST_MODE = 0  # Change to 0 for normal voice mode
 
 def parse_intent_with_llm(user_speech):
     """Use Ollama (local) to parse user's actual intent from their speech"""
@@ -17,7 +17,7 @@ def parse_intent_with_llm(user_speech):
     try:
         print("connecting to LLM")
         response = requests.post(
-            'http://localhost:11434/api/generate',
+            'http://10.200.206.195:11434/api/generate',
             json={
                 'model': 'llama3.2',  # or 'llama3.2', 'mistral', 'phi3', etc.
                 'prompt': f"""You are a command parser. Extract the robot command.
@@ -265,10 +265,10 @@ if __name__ == "__main__":
     misty = Robot(ip_address)
 
     print("misty setup sucessfully")
-    #misty.display_image("e_SleepingZZZ.jpg", 1)
-    # misty.move_head(60, 0, 0, 80)
-    # misty.move_arms(85, 85, 80, 80)
-    # misty.change_led(0, 0, 255)
+    misty.display_image("e_SleepingZZZ.jpg", 1)
+    misty.move_head(60, 0, 0, 80)
+    misty.move_arms(85, 85, 80, 80)
+    misty.change_led(0, 0, 255)
     
     if TEST_MODE:
         print("entered test mode")
