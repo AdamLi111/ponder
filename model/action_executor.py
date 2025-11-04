@@ -1,6 +1,6 @@
 """
 Action executor module
-Defines and executes all robot actions
+Defines and executes all robot actions with positive friction support
 """
 import time
 
@@ -19,17 +19,26 @@ class ActionExecutor:
             'right': self.move_right,
             'stop': self.stop,
             'speak': self.speak,
+            'clarify': self.clarify,
             'describe_vision': self.describe_vision,
             'unknown': self.unknown_action
         }
     
     def execute(self, intent):
-        """Execute an action based on parsed intent"""
+        """Execute an action based on parsed intent with friction handling"""
+        friction_type = intent.get('friction_type', 'none')
         action = intent.get('action', 'unknown')
         distance = intent.get('distance', 1.0)
         text = intent.get('text', '')
         
-        print(f"Executing action: {action}")
+        print(f"Executing - Friction: {friction_type}, Action: {action}")
+        
+        # Handle friction first if present
+        if friction_type != 'none' and text:
+            self.robot.speak(text)
+            # If action is clarify, we stop here and wait for user response
+            if action == 'clarify':
+                return
         
         # Get the action function and execute it
         action_func = self.actions.get(action, self.unknown_action)
@@ -78,6 +87,13 @@ class ActionExecutor:
         if not text:
             text = "I don't know what to say"
         print(f"Speaking: {text}")
+        self.robot.speak(text)
+    
+    def clarify(self, text, **kwargs):
+        """Ask clarifying question - same as speak but semantically different"""
+        if not text:
+            text = "Could you please clarify what you'd like me to do?"
+        print(f"Requesting clarification: {text}")
         self.robot.speak(text)
     
     def describe_vision(self, **kwargs):

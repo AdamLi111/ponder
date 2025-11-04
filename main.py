@@ -37,8 +37,8 @@ class MistyController:
         self.robot.change_led(0, 0, 255)
         print("Setup complete")
     
-    def voice_record_callback(self, data):
-        """Callback for voice recording events"""
+    def _voice_record_callback(self, data):
+        """Internal callback wrapper for voice recording events"""
         print("Voice_Record_Callback triggered!")
         print(f"Full data received: {data}")
         
@@ -74,14 +74,20 @@ class MistyController:
                 else:
                     print("Could not transcribe audio")
                     self.robot.speak("Sorry, I couldn't hear you clearly")
+                
+                # Reset LED and wait for next command
+                print("\nReady for next command. Say 'Hey Misty' to continue...")
+                self.robot.change_led(0, 0, 255)  # Blue LED - ready state
                     
         except Exception as e:
             print(f"Error processing voice: {e}")
             import traceback
             traceback.print_exc()
+            # Make sure we're ready for next command even if there's an error
+            self.robot.change_led(0, 0, 255)
     
-    def key_phrase_callback(self, data):
-        """Callback when key phrase is recognized"""
+    def _key_phrase_callback(self, data):
+        """Internal callback wrapper when key phrase is recognized"""
         print("="*50)
         print("Key phrase detected! Listening for command...")
         print("="*50)
@@ -105,12 +111,19 @@ class MistyController:
         print("Starting key phrase recognition...")
         self.robot.start_key_phrase_recognition()
         
-        # Register events
+        # Create wrapper functions that only take data parameter
+        def key_phrase_wrapper(data):
+            self._key_phrase_callback(data)
+        
+        def voice_record_wrapper(data):
+            self._voice_record_callback(data)
+        
+        # Register events with wrapper functions
         print("Registering Key Phrase event...")
         self.robot.register_event(
             event_name='Key_Phrase_Recognized',
             event_type=Events.KeyPhraseRecognized,
-            callback_function=self.key_phrase_callback,
+            callback_function=key_phrase_wrapper,
             keep_alive=True
         )
         
@@ -118,7 +131,7 @@ class MistyController:
         self.robot.register_event(
             event_name='VoiceRecord',
             event_type=Events.VoiceRecord,
-            callback_function=self.voice_record_callback,
+            callback_function=voice_record_wrapper,
             keep_alive=True
         )
         
@@ -130,51 +143,13 @@ class MistyController:
         print("  - 'say hello to everyone'")
         print("="*50 + "\n")
         
-        self.robot.keep_alive()
-    
-    def test_mode_loop(self):
-        """Interactive testing mode with typed commands"""
-        print("\n" + "="*50)
-        print("TEST MODE ACTIVE - Type commands instead of speaking")
-        print("Robot WILL execute movements based on your typed commands")
-        print("Using Google Gemini (free) for parsing and vision")
-        print("Type commands to test (or 'quit' to exit)")
-        print("="*50)
-        print("\nAvailable commands:")
-        print("  - Movement: 'move forward 1 meter', 'go left', 'stop'")
-        print("  - Vision: 'what do you see', 'describe what's in front of you'")
-        print("  - Speech: 'say hello', 'tell me a joke'")
-        print("="*50 + "\n")
-        
-        while True:
-            try:
-                # Get user input
-                user_input = input("\nEnter command: ").strip()
-                
-                if user_input.lower() in ['quit', 'exit', 'q']:
-                    print("Exiting test mode...")
-                    break
-                
-                if not user_input:
-                    continue
-                
-                print(f"\n--- Processing: '{user_input}' ---")
-                
-                # Parse intent with LLM
-                intent = self.llm_layer.parse_intent(user_input)
-                
-                # Execute action
-                self.action_executor.execute(intent)
-                
-                print("--- Done ---\n")
-                
-            except KeyboardInterrupt:
-                print("\n\nExiting test mode...")
-                break
-            except Exception as e:
-                print(f"Error: {e}")
-                import traceback
-                traceback.print_exc()
+        # Keep the event loop running
+        try:
+            self.robot.keep_alive()
+        except KeyboardInterrupt:
+            print("\nShutting down Misty...")
+            self.robot.unregister_all_events()
+            print("Goodbye!")
     
     def run(self):
         """Main execution method"""
