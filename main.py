@@ -5,11 +5,12 @@ Handles voice interaction loop and coordinates all modules
 from PythonSDKmain.mistyPy.Robot import Robot
 from PythonSDKmain.mistyPy.Events import Events
 import time
+import os
 
 from model import SpeechHandler, LLMLayer, VisionHandler, ActionExecutor
 
 TEST_MODE = True
-
+api_key = os.getenv('GROQ_API_KEY')
 
 class MistyController:
     def __init__(self, ip_address, groq_api_key):
@@ -249,7 +250,7 @@ class MistyController:
 if __name__ == "__main__":
     # Configuration
     IP_ADDRESS = "172.20.10.2"
-    GROQ_API_KEY = "APIKEY"
+    GROQ_API_KEY = api_key
     
     # Create and run controller
     controller = MistyController(
