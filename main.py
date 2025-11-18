@@ -8,9 +8,11 @@ import time
 
 from model import SpeechHandler, LLMLayer, VisionHandler, ActionExecutor
 
+TEST_MODE = True
+
 
 class MistyController:
-    def __init__(self, ip_address, gemini_api_key):
+    def __init__(self, ip_address, groq_api_key):
         self.ip_address = ip_address
         
         # Initialize robot
@@ -18,7 +20,7 @@ class MistyController:
         
         # Initialize modules
         self.speech_handler = SpeechHandler(ip_address)
-        self.llm_layer = LLMLayer(gemini_api_key)
+        self.llm_layer = LLMLayer(groq_api_key)
         self.vision_handler = VisionHandler(self.robot, ip_address)
         self.action_executor = ActionExecutor(
             self.robot, 
@@ -26,16 +28,11 @@ class MistyController:
             self.llm_layer
         )
         
-        print("Misty controller initialized")
-    
-    def setup_robot(self):
-        """Initial robot setup"""
-        print("Setting up Misty...")
-        self.robot.display_image("e_SleepingZZZ.jpg", 1)
-        self.robot.move_head(60, 0, 0, 80)
-        self.robot.move_arms(85, 85, 80, 80)
-        self.robot.change_led(0, 0, 255)
-        print("Setup complete")
+        # Add a lock to prevent race conditions
+        self.processing_audio = False
+        self.last_processed_file = None
+        
+        print("Misty controller initialized with Groq LLM")
     
     def _voice_record_callback(self, data):
         """Internal callback wrapper for voice recording events"""
@@ -54,37 +51,76 @@ class MistyController:
                     print("Skipping key phrase audio")
                     return
                 
-                # Transcribe the audio
+                # Prevent duplicate processing - check BEFORE setting the lock
+                if filename == self.last_processed_file:
+                    print(f"Already processed this file: {filename}")
+                    return
+                
+                if self.processing_audio:
+                    print(f"Already processing another audio file")
+                    return
+                
+                # Set lock and mark file as being processed
+                self.processing_audio = True
+                self.last_processed_file = filename
+                
+                print(f"[DEBUG] About to transcribe. Lock set.")
+                
+                # Transcribe the audio (NO SPEAKING YET!)
                 print("Transcribing audio...")
-                self.robot.speak("Let me think about that")
                 
                 speech_text = self.speech_handler.transcribe_audio_from_misty(filename)
                 
+                print(f"[DEBUG] Transcription result: {speech_text}")
+                
                 if speech_text:
-                    print(f"Heard: {speech_text}")
-                    
-                    # Parse intent with LLM
-                    intent = self.llm_layer.parse_intent(speech_text)
-                    
-                    # Execute the action
-                    if intent['action'] != "unknown":
-                        self.action_executor.execute(intent)
-                    else:
-                        self.robot.speak("I'm not sure what you want me to do")
+                    self._process_command(speech_text)
                 else:
                     print("Could not transcribe audio")
+                    print("[DEBUG] About to speak: Sorry, I couldn't hear you clearly")
                     self.robot.speak("Sorry, I couldn't hear you clearly")
+                    print("[DEBUG] Finished speaking")
                 
-                # Reset LED and wait for next command
                 print("\nReady for next command. Say 'Hey Misty' to continue...")
-                self.robot.change_led(0, 0, 255)  # Blue LED - ready state
-                    
+                self.robot.change_led(0, 0, 255)
+                
         except Exception as e:
             print(f"Error processing voice: {e}")
             import traceback
             traceback.print_exc()
-            # Make sure we're ready for next command even if there's an error
             self.robot.change_led(0, 0, 255)
+        finally:
+            # Always release the lock
+            print(f"[DEBUG] Releasing lock")
+            self.processing_audio = False
+    
+    def _process_command(self, speech_text):
+        """Common command processing logic for both voice and typed input"""
+        print(f"Heard: {speech_text}")
+        
+        # Parse intent with LLM
+        try:
+            intent = self.llm_layer.parse_intent(speech_text)
+            
+            # Execute the action
+            if intent['action'] != "unknown":
+                self.action_executor.execute(intent)
+            else:
+                print("[DEBUG] About to speak: I'm not sure what you want me to do")
+                self.robot.speak("I'm not sure what you want me to do")
+        except Exception as llm_error:
+            print(f"LLM error: {llm_error}")
+            print("[DEBUG] About to speak: Sorry, I had trouble understanding that")
+            self.robot.speak("Sorry, I had trouble understanding that")
+
+    def setup_robot(self):
+        """Initial robot setup"""
+        print("Setting up Misty...")
+        self.robot.display_image("e_SleepingZZZ.jpg", 1)
+        # self.robot.move_head(60, 0, 0, 80)
+        # self.robot.move_arms(85, 85, 80, 80)
+        # self.robot.change_led(0, 0, 255)
+        print("Setup complete")
     
     def _key_phrase_callback(self, data):
         """Internal callback wrapper when key phrase is recognized"""
@@ -95,16 +131,19 @@ class MistyController:
         self.robot.display_image("e_Surprise.jpg", 1)
         self.robot.change_led(0, 255, 0)  # Green LED to show listening
         
-        # Start speech capture
+        # Start speech capture with longer timeout
         print("Starting speech capture...")
         try:
-            result = self.robot.capture_speech()
+            # Give user more time to speak before detecting silence
+            result = self.robot.capture_speech(
+                overwriteExisting=True,
+                silenceTimeout=5000,  # 5 seconds of silence
+                maxSpeechLength=10000  # Max 10 seconds of speech
+            )
             print(f"Capture speech result: {result}")
         except Exception as e:
             print(f"Error starting speech capture: {e}")
-        
-        time.sleep(5)
-        self.robot.change_led(0, 0, 255)
+            self.robot.change_led(0, 0, 255)  # Reset to blue on error
     
     def start_voice_mode(self):
         """Start voice-controlled interaction mode"""
@@ -136,7 +175,7 @@ class MistyController:
         )
         
         print("\n" + "="*50)
-        print("Misty is ready with LLM-powered intent parsing and vision!")
+        print("Misty is ready with Groq-powered intent parsing and vision!")
         print("Say 'Hey Misty' then give a command like:")
         print("  - 'move forward 1 meter'")
         print("  - 'what do you see?'")
@@ -151,10 +190,55 @@ class MistyController:
             self.robot.unregister_all_events()
             print("Goodbye!")
     
+    def start_test_mode(self):
+        """Test mode - type commands in terminal"""
+        print("\n" + "="*50)
+        print("TEST MODE: Type commands directly")
+        print("="*50)
+        print("Available commands:")
+        print("  - 'move forward 2 meters'")
+        print("  - 'move backward 1 meter'")
+        print("  - 'turn left'")
+        print("  - 'turn right'")
+        print("  - 'what do you see?'")
+        print("  - 'say hello everyone'")
+        print("  - 'stop'")
+        print("  - Type 'quit' to exit")
+        print("="*50 + "\n")
+        
+        while True:
+            try:
+                # Get user input
+                user_input = input("Enter command: ").strip()
+                
+                if user_input.lower() == 'quit':
+                    print("Exiting...")
+                    break
+                
+                if not user_input:
+                    continue
+                
+                # Process the command using the same logic as voice
+                self._process_command(user_input)
+                
+                print()  # Empty line for readability
+                
+            except KeyboardInterrupt:
+                print("\nExiting...")
+                break
+            except Exception as e:
+                print(f"Error: {e}")
+                import traceback
+                traceback.print_exc()
+    
     def run(self):
         """Main execution method"""
         self.setup_robot()
-        self.start_voice_mode()
+        
+        if TEST_MODE:
+            self.start_test_mode()
+        else:
+            self.start_voice_mode()
     
     def cleanup(self):
         """Clean up resources"""
@@ -165,12 +249,12 @@ class MistyController:
 if __name__ == "__main__":
     # Configuration
     IP_ADDRESS = "172.20.10.2"
-    GEMINI_API_KEY = "AIzaSyDmIcNnlfYB39w4W2d76hq3C1nGI9sdmK0"
+    GROQ_API_KEY = "APIKEY"
     
     # Create and run controller
     controller = MistyController(
         ip_address=IP_ADDRESS,
-        gemini_api_key=GEMINI_API_KEY
+        groq_api_key=GROQ_API_KEY
     )
     
     try:
