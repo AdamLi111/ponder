@@ -1,24 +1,39 @@
 """
 LLM layer for intent parsing and vision description
-Uses Groq API for natural language understanding
+Uses Groq API for text/intent parsing and Gemini for vision
 """
 from groq import Groq
+from google import genai
 import json
 
 
 class LLMLayer:
-    def __init__(self, api_key):
-        self.client = Groq(api_key=api_key)
-        # Using Llama 3.1 8B here
-        self.model = "llama-3.3-70b-versatile"
+    def __init__(self, groq_api_key, gemini_api_key=None):
+        # Groq for text/intent parsing
+        self.groq_client = Groq(api_key=groq_api_key)
+        self.groq_model = "llama-3.1-8b-instant"
+        self.conversation_history = []
+        
+        # Gemini for vision (optional)
+        self.gemini_client = None
+        self.gemini_model = "gemini-2.0-flash-exp"
+        if gemini_api_key:
+            self.gemini_client = genai.Client(api_key=gemini_api_key)
+            print("Vision enabled with Gemini Flash")
+        else:
+            print("Warning: No Gemini API key provided - vision will be disabled")
     
     def parse_intent(self, user_speech):
         """Use Groq to parse user's intent from their speech with positive friction"""
+        self.conversation_history.append({
+            "role" : "user",
+            "content" : user_speech
+        })
         print(f"Parsing intent for: '{user_speech}'")
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
                 messages=[
                     {
                         "role": "system",
@@ -112,13 +127,39 @@ Analyze the command and return the appropriate JSON with friction assessment:"""
                 return {'action': 'unknown', 'distance': 0, 'text': ''}
                 
         except Exception as e:
-            print(f"Error calling LLM: {e}")
+            print(f"Error calling Groq LLM: {e}")
             import traceback
             traceback.print_exc()
             return {'action': 'unknown', 'distance': 0, 'text': ''}
     
     def describe_image(self, image_data_base64):
-        """Get description of an image - Note: Groq doesn't support vision yet"""
-        print("Warning: Groq doesn't support vision API yet")
-        print("You'll need to use a different service for vision or wait for Groq vision support")
-        return "Vision description not available with Groq"
+        """Get description of an image using Gemini Vision"""
+        if not self.gemini_client:
+            print("Error: No Gemini API key provided - cannot describe images")
+            return "Vision is not available. Please provide a Gemini API key."
+        
+        try:
+            print("Analyzing image with Gemini Flash...")
+            
+            response = self.gemini_client.models.generate_content(
+                model=self.gemini_model,
+                contents=[
+                    "Describe what you see in this image in 2-3 sentences. Be specific about objects, people, and the setting.",
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": image_data_base64
+                        }
+                    }
+                ]
+            )
+            
+            description = response.text.strip()
+            print(f"Vision description: {description}")
+            return description
+            
+        except Exception as e:
+            print(f"Error in Gemini image description: {e}")
+            import traceback
+            traceback.print_exc()
+            return None

@@ -12,5 +12,6 @@ __all__ = [
     'SpeechHandler',
     'LLMLayer', 
     'VisionHandler',
-    'ActionExecutor'
+    'ActionExecutor',
+    'MistyController'
 ]
