@@ -63,7 +63,7 @@ class ActionExecutor:
         drive_time_ms = self._calculate_drive_time(distance)
         print(f"Going left {distance} meter(s)")
         self.robot.speak(f"Going left {distance} meters")
-        self.robot.drive_time(0, -50, 1000)
+        self.robot.drive_time(0, 100, 4300) # 4300 time works best on the office floor
         time.sleep(1.5)
         self.robot.drive_time(50, 0, drive_time_ms)
     
@@ -72,9 +72,9 @@ class ActionExecutor:
         drive_time_ms = self._calculate_drive_time(distance)
         print(f"Going right {distance} meter(s)")
         self.robot.speak(f"Going right {distance} meters")
-        self.robot.drive_time(0, 50, 1000)
-        time.sleep(1.5)
-        self.robot.drive_time(50, 0, drive_time_ms)
+        self.robot.drive_time(0, -100, 4300)
+        time.sleep(3)
+        #self.robot.drive_time(50, 0, drive_time_ms)
     
     def stop(self, **kwargs):
         """Stop robot movement"""

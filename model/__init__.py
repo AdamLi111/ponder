@@ -7,6 +7,7 @@ from .speech_handler import SpeechHandler
 from .llm_layer import LLMLayer
 from .vision_handler import VisionHandler
 from .action_executor import ActionExecutor
+from .misty_controller import MistyController
 
 __all__ = [
     'SpeechHandler',

@@ -25,19 +25,20 @@ class LLMLayer:
     
     def parse_intent(self, user_speech):
         """Use Groq to parse user's intent from their speech with positive friction"""
-        self.conversation_history.append({
-            "role" : "user",
-            "content" : user_speech
-        })
         print(f"Parsing intent for: '{user_speech}'")
         
         try:
-            response = self.groq_client.chat.completions.create(
-                model=self.groq_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are Misty, an embodied robot assistant who engages in natural, collaborative dialogue. 
+            # Add the new user message to history
+            self.conversation_history.append({
+                "role": "user",
+                "content": f"User said: \"{user_speech}\""
+            })
+            
+            # Build the full message list with system prompt + conversation history
+            messages = [
+                {
+                    "role": "system",
+                    "content": """You are Misty, an embodied robot assistant who engages in natural, collaborative dialogue. 
 Your role is to parse user commands AND decide when to add positive conversational friction to ensure safe, clear task execution.
 
 # Core Parsing Rules:
@@ -46,12 +47,13 @@ Your role is to parse user commands AND decide when to add positive conversation
 3. Extract distance in meters (default to 1 if not specified, 0 for non-movement commands)
 4. Extract any text to speak
 5. Determine if you should add conversational friction before executing
+6. USE CONVERSATION HISTORY to understand context and references like "it", "there", "yes", etc.
 
 # Positive Friction Types:
 
 **Probing (clarify)** - Use when:
-- Ambiguous spatial references (e.g., "over there", "that side")
-- Unclear object references (e.g., "it", "that thing" without context)
+- Ambiguous spatial references (e.g., "over there", "that side") WITH NO PRIOR CONTEXT
+- Unclear object references (e.g., "it", "that thing") WITH NO PRIOR CONTEXT
 - Missing critical safety information (distance near obstacles)
 - Vague directions that could have multiple interpretations
 
@@ -70,39 +72,48 @@ Return ONLY a JSON object with these fields:
 - "friction_type": "none", "probing", "assumption_reveal", or "overspecification"
 - "action": forward, backward, left, right, stop, describe_vision, speak, clarify, or unknown
 - "distance": number in meters (0 for non-movement)
-- "text": what to speak (clarifying question for probing, assumption statement, or confirmation)"""
-                    },
-                    {
-                        "role": "user",
-                        "content": f"""# Examples:
+- "text": what to speak (clarifying question for probing, assumption statement, or confirmation)
+
+# Examples:
 
 **Simple clear command (no friction):**
 User: "move forward 2 meters"
-{{"friction_type": "none", "action": "forward", "distance": 2, "text": ""}}
+{"friction_type": "none", "action": "forward", "distance": 2, "text": ""}
 
 **Ambiguous reference (probing):**
 User: "move toward that"
-{{"friction_type": "probing", "action": "clarify", "distance": 0, "text": "Which object are you referring to? Could you be more specific about where you'd like me to move?"}}
+{"friction_type": "probing", "action": "clarify", "distance": 0, "text": "Which object are you referring to? Could you be more specific about where you'd like me to move?"}
 
-**Spatial ambiguity (probing):**
-User: "go over there"
-{{"friction_type": "probing", "action": "clarify", "distance": 0, "text": "I want to make sure I understand correctly. Should I describe what's in front of me, or turn to look somewhere else?"}}
+**Follow-up with context:**
+Previous: Asked user to clarify which chair
+User: "yes the one in front of you"
+{"friction_type": "assumption_reveal", "action": "forward", "distance": 1, "text": "Moving toward the chair directly in front of me"}
 
-**Obstacle concern (assumption reveal):**
-User: "move forward 3 meters"
-{{"friction_type": "assumption_reveal", "action": "speak", "distance": 0, "text": "I'll move forward 3 meters. I don't see any obstacles in my path."}}
-
-# User said: "{user_speech}"
-
-Analyze the command and return the appropriate JSON with friction assessment:"""
-                    }
-                ],
+**Confirmation response:**
+Previous: Asked if user meant object X
+User: "yes"
+{"friction_type": "none", "action": "forward", "distance": 1, "text": ""}"""
+                }
+            ]
+            
+            # Add all conversation history
+            messages.extend(self.conversation_history)
+            
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=messages,
                 temperature=0.1,
                 max_tokens=500
             )
             
             llm_output = response.choices[0].message.content.strip()
             print(f"LLM raw output: {llm_output}")
+            
+            # Add the assistant's response to history
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": llm_output
+            })
             
             # Extract JSON from response
             json_start = llm_output.find('{')
@@ -131,6 +142,11 @@ Analyze the command and return the appropriate JSON with friction assessment:"""
             import traceback
             traceback.print_exc()
             return {'action': 'unknown', 'distance': 0, 'text': ''}
+    
+    def clear_conversation_history(self):
+        """Clear conversation history (useful for starting fresh)"""
+        self.conversation_history = []
+        print("Conversation history cleared")
     
     def describe_image(self, image_data_base64):
         """Get description of an image using Gemini Vision"""
