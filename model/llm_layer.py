@@ -48,6 +48,12 @@ Your role is to parse user commands AND decide when to add positive conversation
 4. Extract any text to speak
 5. Determine if you should add conversational friction before executing
 6. USE CONVERSATION HISTORY to understand context and references like "it", "there", "yes", etc.
+7. **CRITICAL: Detect action sequences** - if the user says commands like "move forward 1 meter and then go right 1 meter" or "go left then forward", return MULTIPLE actions
+
+# Action Sequence Detection:
+- Look for words like "and then", "then", "after that", "next", "followed by"
+- Return an array of actions for sequences
+- Each action in the sequence should have its own friction_type, action, distance, and text
 
 # Positive Friction Types:
 
@@ -68,17 +74,42 @@ Your role is to parse user commands AND decide when to add positive conversation
 - Acknowledging multi-step or complex commands
 
 # Output Format:
-Return ONLY a JSON object with these fields:
-- "friction_type": "none", "probing", "assumption_reveal", or "overspecification"
-- "action": forward, backward, left, right, stop, describe_vision, speak, clarify, or unknown
-- "distance": number in meters (0 for non-movement)
-- "text": what to speak (clarifying question for probing, assumption statement, or confirmation)
+
+**For SINGLE actions:**
+Return a JSON object with these fields:
+{"friction_type": "none", "action": "forward", "distance": 2, "text": ""}
+
+**For ACTION SEQUENCES:**
+Return a JSON object with an "actions" array:
+{"actions": [
+  {"friction_type": "none", "action": "forward", "distance": 1, "text": ""},
+  {"friction_type": "none", "action": "right", "distance": 1, "text": ""}
+]}
 
 # Examples:
 
-**Simple clear command (no friction):**
+**Simple single command (no friction):**
 User: "move forward 2 meters"
 {"friction_type": "none", "action": "forward", "distance": 2, "text": ""}
+
+**Action sequence:**
+User: "move forward 1 meter and then go right 1 meter"
+{"actions": [
+  {"friction_type": "none", "action": "forward", "distance": 1, "text": ""},
+  {"friction_type": "none", "action": "right", "distance": 1, "text": ""}
+]}
+
+**Complex sequence:**
+User: "go left 2 meters then forward 1 meter then turn right"
+{"actions": [
+  {"friction_type": "none", "action": "left", "distance": 2, "text": ""},
+  {"friction_type": "none", "action": "forward", "distance": 1, "text": ""},
+  {"friction_type": "none", "action": "turn_right", "distance": 90, "text": ""}
+]}
+
+**Sequence with confirmation friction (long sequence):**
+User: "move forward 3 meters then left 2 meters then backward 1 meter then right 2 meters"
+{"friction_type": "overspecify", "action": "speak", "distance": 0, "text": "I'll execute 4 movements: forward 3m, left 2m, backward 1m, then right 2m. Say confirm to proceed."}
 
 **Ambiguous reference (probing):**
 User: "move toward that"
@@ -121,27 +152,37 @@ User: "yes"
             
             if json_start != -1 and json_end > json_start:
                 json_str = llm_output[json_start:json_end]
-                intent = json.loads(json_str)
+                parsed = json.loads(json_str)
                 
-                action = intent.get('action', 'unknown')
-                distance = intent.get('distance', 1.0)
-                text = intent.get('text', '')
-                
-                print(f"Parsed intent - Action: {action}, Distance: {distance}, Text: {text}")
-                return {
-                    'action': action,
-                    'distance': distance,
-                    'text': text
-                }
+                # Check if it's a sequence or single action
+                if "actions" in parsed:
+                    # It's a sequence
+                    actions = parsed["actions"]
+                    print(f"Parsed {len(actions)} actions in sequence")
+                    return actions
+                else:
+                    # Single action - wrap in list for consistent handling
+                    action = parsed.get('action', 'unknown')
+                    distance = parsed.get('distance', 1.0)
+                    friction_type = parsed.get('friction_type', 'none')
+                    text = parsed.get('text', '')
+                    
+                    print(f"Parsed intent - Action: {action}, Distance: {distance}, Text: {text}")
+                    return [{
+                        'action': action,
+                        'distance': distance,
+                        'friction_type': friction_type,
+                        'text': text
+                    }]
             else:
                 print("Could not find JSON in response")
-                return {'action': 'unknown', 'distance': 0, 'text': ''}
+                return [{'action': 'unknown', 'distance': 0, 'friction_type': 'none', 'text': ''}]
                 
         except Exception as e:
             print(f"Error calling Groq LLM: {e}")
             import traceback
             traceback.print_exc()
-            return {'action': 'unknown', 'distance': 0, 'text': ''}
+            return [{'action': 'unknown', 'distance': 0, 'friction_type': 'none', 'text': ''}]
     
     def clear_conversation_history(self):
         """Clear conversation history (useful for starting fresh)"""
@@ -155,12 +196,10 @@ User: "yes"
             return "Vision is not available. Please provide a Gemini API key."
         
         try:
-            print("Analyzing image with Gemini Flash...")
-            
             response = self.gemini_client.models.generate_content(
                 model=self.gemini_model,
                 contents=[
-                    "Describe what you see in this image in 2-3 sentences. Be specific about objects, people, and the setting.",
+                    "Describe what you see in this image in detail. Be specific about objects, people, and the setting.",
                     {
                         "inline_data": {
                             "mime_type": "image/jpeg",
@@ -172,10 +211,11 @@ User: "yes"
             
             description = response.text.strip()
             print(f"Vision description: {description}")
+            
             return description
             
         except Exception as e:
-            print(f"Error in Gemini image description: {e}")
+            print(f"Error in describe_image: {e}")
             import traceback
             traceback.print_exc()
-            return None
+            return "Sorry, I couldn't analyze the image."

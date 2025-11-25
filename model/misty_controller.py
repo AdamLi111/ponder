@@ -6,7 +6,10 @@ from PythonSDKmain.mistyPy.Robot import Robot
 from PythonSDKmain.mistyPy.Events import Events
 import time
 
-from . import SpeechHandler, LLMLayer, VisionHandler, ActionExecutor
+from .speech_handler import SpeechHandler
+from .llm_layer import LLMLayer
+from .vision_handler import VisionHandler
+from .action_executor import ActionExecutor
 
 
 class MistyController:
@@ -64,18 +67,21 @@ class MistyController:
         """
         print(f"Heard: {speech_text}")
         
-        # Parse intent with LLM
+        # Parse intent with LLM - now returns a list of actions
         try:
-            intent = self.llm_layer.parse_intent(speech_text)
+            action_list = self.llm_layer.parse_intent(speech_text)
             
-            # Execute the action
-            if intent['action'] != "unknown":
-                self.action_executor.execute(intent)
+            # Check if any actions were parsed
+            if action_list and action_list[0]['action'] != "unknown":
+                # Execute the action(s) - ActionExecutor handles both single and sequences
+                self.action_executor.execute(action_list)
             else:
                 print("[DEBUG] About to speak: I'm not sure what you want me to do")
                 self.robot.speak("I'm not sure what you want me to do")
         except Exception as llm_error:
             print(f"LLM error: {llm_error}")
+            import traceback
+            traceback.print_exc()
             print("[DEBUG] About to speak: Sorry, I had trouble understanding that")
             self.robot.speak("Sorry, I had trouble understanding that")
     
@@ -152,56 +158,52 @@ class MistyController:
         self.robot.display_image("e_Surprise.jpg", 1)
         self.robot.change_led(0, 255, 0)  # Green LED to show listening
         
-        # Start speech capture with longer timeout
+        # Start speech capture
         print("Starting speech capture...")
         try:
-            # Give user more time to speak before detecting silence
-            result = self.robot.capture_speech(
-                overwriteExisting=True,
-                silenceTimeout=5000,  # 5 seconds of silence
-                maxSpeechLength=10000  # Max 10 seconds of speech
-            )
+            result = self.robot.capture_speech()
             print(f"Capture speech result: {result}")
         except Exception as e:
             print(f"Error starting speech capture: {e}")
-            self.robot.change_led(0, 0, 255)  # Reset to blue on error
+        
+        time.sleep(5)
+        self.robot.change_led(0, 0, 255)
     
     def start_voice_mode(self):
         """
-        Start voice-controlled interaction mode
-        Registers event handlers and begins listening for wake phrase
+        Start voice-controlled mode with wake phrase detection
         """
         print("Starting key phrase recognition...")
         self.robot.start_key_phrase_recognition()
         
-        # Create wrapper functions that only take data parameter
-        def key_phrase_wrapper(data):
-            self._key_phrase_callback(data)
+        # Register callbacks using wrapper functions
+        print("Registering events...")
         
-        def voice_record_wrapper(data):
+        def voice_callback_wrapper(data):
             self._voice_record_callback(data)
         
-        # Register events with wrapper functions
-        print("Registering Key Phrase event...")
+        def key_phrase_callback_wrapper(data):
+            self._key_phrase_callback(data)
+        
         self.robot.register_event(
             event_name='Key_Phrase_Recognized',
             event_type=Events.KeyPhraseRecognized,
-            callback_function=key_phrase_wrapper,
+            callback_function=key_phrase_callback_wrapper,
             keep_alive=True
         )
         
-        print("Registering VoiceRecord event...")
         self.robot.register_event(
             event_name='VoiceRecord',
             event_type=Events.VoiceRecord,
-            callback_function=voice_record_wrapper,
+            callback_function=voice_callback_wrapper,
             keep_alive=True
         )
         
         print("\n" + "="*50)
-        print("Misty is ready with Groq-powered intent parsing and Claude vision!")
+        print("Misty is ready!")
         print("Say 'Hey Misty' then give a command like:")
         print("  - 'move forward 1 meter'")
+        print("  - 'move forward 2 meters and then go right 1 meter'")
         print("  - 'what do you see?'")
         print("  - 'say hello to everyone'")
         print("="*50 + "\n")
@@ -223,12 +225,11 @@ class MistyController:
         print("TEST MODE: Type commands directly")
         print("="*50)
         print("Available commands:")
-        print("  - 'move forward 2 meters'")
-        print("  - 'move backward 1 meter'")
-        print("  - 'turn left'")
-        print("  - 'turn right'")
-        print("  - 'what do you see?'")
-        print("  - 'say hello everyone'")
+        print("  - Single: 'move forward 2 meters'")
+        print("  - Sequence: 'move forward 1 meter and then go right 1 meter'")
+        print("  - Complex: 'go left then forward 2 meters then turn right'")
+        print("  - Vision: 'what do you see?'")
+        print("  - Speech: 'say hello everyone'")
         print("  - 'stop'")
         print("  - Type 'quit' to exit")
         print("="*50 + "\n")

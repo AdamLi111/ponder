@@ -17,6 +17,8 @@ class ActionExecutor:
             'backward': self.move_backward,
             'left': self.move_left,
             'right': self.move_right,
+            'turn_left': self.turn_left,
+            'turn_right': self.turn_right,
             'stop': self.stop,
             'speak': self.speak,
             'clarify': self.clarify,
@@ -24,8 +26,41 @@ class ActionExecutor:
             'unknown': self.unknown_action
         }
     
-    def execute(self, intent):
-        """Execute an action based on parsed intent with friction handling"""
+    def execute(self, intent_or_list):
+        """
+        Execute a single action or a sequence of actions
+        
+        Args:
+            intent_or_list: Either a single intent dict or a list of intent dicts
+        """
+        # Handle both single action and list of actions
+        if isinstance(intent_or_list, list):
+            self.execute_sequence(intent_or_list)
+        else:
+            self.execute_single(intent_or_list)
+    
+    def execute_sequence(self, action_list):
+        """Execute a sequence of actions"""
+        print(f"\n{'='*50}")
+        print(f"Executing sequence of {len(action_list)} action(s)")
+        print(f"{'='*50}")
+        
+        for i, intent in enumerate(action_list):
+            print(f"\n>>> Action {i+1}/{len(action_list)} <<<")
+            self.execute_single(intent)
+            
+            # Small delay between actions for stability
+            # Skip delay after the last action
+            if i < len(action_list) - 1:
+                print("Pausing briefly before next action...")
+                time.sleep(0.5)
+        
+        print(f"\n{'='*50}")
+        print(f"Sequence complete!")
+        print(f"{'='*50}\n")
+    
+    def execute_single(self, intent):
+        """Execute a single action based on parsed intent with friction handling"""
         friction_type = intent.get('friction_type', 'none')
         action = intent.get('action', 'unknown')
         distance = intent.get('distance', 1.0)
@@ -50,6 +85,7 @@ class ActionExecutor:
         print(f"Moving forward {distance} meter(s)")
         self.robot.speak(f"Moving forward {distance} meters")
         self.robot.drive_time(50, 0, drive_time_ms)
+        time.sleep(2)
     
     def move_backward(self, distance, **kwargs):
         """Move robot backward"""
@@ -57,24 +93,51 @@ class ActionExecutor:
         print(f"Moving backward {distance} meter(s)")
         self.robot.speak(f"Moving backward {distance} meters")
         self.robot.drive_time(-50, 0, drive_time_ms)
+        time.sleep(2)
     
     def move_left(self, distance, **kwargs):
-        """Move robot left"""
+        """Turn left 90 degrees then move forward"""
+        print(f"Turning left and moving {distance} meter(s)")
+        self.robot.speak(f"Turning left and moving {distance} meters")
+        
+        # Turn left 90 degrees
+        self.robot.drive_time(0, 100, 4300)
+        time.sleep(4.5)  # Wait for turn to complete
+        
+        # Move forward
         drive_time_ms = self._calculate_drive_time(distance)
-        print(f"Going left {distance} meter(s)")
-        self.robot.speak(f"Going left {distance} meters")
-        self.robot.drive_time(0, 100, 4300) # 4300 time works best on the office floor
-        time.sleep(1.5)
         self.robot.drive_time(50, 0, drive_time_ms)
     
     def move_right(self, distance, **kwargs):
-        """Move robot right"""
-        drive_time_ms = self._calculate_drive_time(distance)
-        print(f"Going right {distance} meter(s)")
-        self.robot.speak(f"Going right {distance} meters")
+        """Turn right 90 degrees then move forward"""
+        print(f"Turning right and moving {distance} meter(s)")
+        self.robot.speak(f"Turning right and moving {distance} meters")
+        
+        # Turn right 90 degrees
         self.robot.drive_time(0, -100, 4300)
-        time.sleep(3)
-        #self.robot.drive_time(50, 0, drive_time_ms)
+        time.sleep(4.5)  # Wait for turn to complete
+        
+        # Move forward
+        drive_time_ms = self._calculate_drive_time(distance)
+        self.robot.drive_time(50, 0, drive_time_ms)
+    
+    def turn_left(self, distance, **kwargs):
+        """Turn left by specified degrees (distance parameter represents degrees)"""
+        degrees = distance if distance != 1.0 else 90  # Default to 90 if not specified
+        turn_time_ms = self._calculate_turn_time(degrees)
+        print(f"Turning left {degrees} degrees")
+        self.robot.speak(f"Turning left {degrees} degrees")
+        self.robot.drive_time(0, 100, turn_time_ms)
+        time.sleep(turn_time_ms / 1000 + 0.2)  # Wait for turn to complete with small buffer
+    
+    def turn_right(self, distance, **kwargs):
+        """Turn right by specified degrees (distance parameter represents degrees)"""
+        degrees = distance if distance != 1.0 else 90  # Default to 90 if not specified
+        turn_time_ms = self._calculate_turn_time(degrees)
+        print(f"Turning right {degrees} degrees")
+        self.robot.speak(f"Turning right {degrees} degrees")
+        self.robot.drive_time(0, -100, turn_time_ms)
+        time.sleep(turn_time_ms / 1000 + 0.2)  # Wait for turn to complete with small buffer
     
     def stop(self, **kwargs):
         """Stop robot movement"""
@@ -132,3 +195,11 @@ class ActionExecutor:
         Approximate: 0.5 meters per second at speed 50
         """
         return int((distance / 0.5) * 1000)
+    
+    def _calculate_turn_time(self, degrees):
+        """Calculate turn time in milliseconds based on degrees
+        
+        Calibration: 4300ms at angular speed 100 = 90 degrees
+        Therefore: time = (degrees / 90) * 4300
+        """
+        return int((degrees / 90.0) * 4300)
