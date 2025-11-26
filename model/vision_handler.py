@@ -24,8 +24,6 @@ class VisionHandler:
         print("Capturing image from Misty's camera...")
         
         try:
-            # Move head to face forward
-            self.robot.move_head(40, 0, 0)
             time.sleep(2)
             
             # Take a photo

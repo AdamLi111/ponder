@@ -1,6 +1,6 @@
 """
 Action executor module
-Defines and executes all robot actions with positive friction support
+Defines and executes all robot actions with positive friction support and spatial navigation
 """
 import time
 
@@ -23,139 +23,201 @@ class ActionExecutor:
             'speak': self.speak,
             'clarify': self.clarify,
             'describe_vision': self.describe_vision,
+            'spatial_navigate': self.spatial_navigate,
             'unknown': self.unknown_action
         }
     
-    def execute(self, intent_or_list):
-        """
-        Execute a single action or a sequence of actions
-        
-        Args:
-            intent_or_list: Either a single intent dict or a list of intent dicts
-        """
-        # Handle both single action and list of actions
-        if isinstance(intent_or_list, list):
-            self.execute_sequence(intent_or_list)
-        else:
-            self.execute_single(intent_or_list)
-    
-    def execute_sequence(self, action_list):
-        """Execute a sequence of actions"""
-        print(f"\n{'='*50}")
-        print(f"Executing sequence of {len(action_list)} action(s)")
-        print(f"{'='*50}")
-        
-        for i, intent in enumerate(action_list):
-            print(f"\n>>> Action {i+1}/{len(action_list)} <<<")
-            self.execute_single(intent)
-            
-            # Small delay between actions for stability
-            # Skip delay after the last action
-            if i < len(action_list) - 1:
-                print("Pausing briefly before next action...")
+    def execute(self, intent):
+        """Execute an action based on parsed intent with friction handling"""
+        # Handle multi-action sequences
+        if 'actions' in intent:
+            print(f"Executing multi-action sequence")
+            for action_item in intent['actions']:
+                action = action_item.get('action', 'unknown')
+                distance = action_item.get('distance', 1.0)
+                
+                action_func = self.actions.get(action, self.unknown_action)
+                action_func(distance=distance)
+                
+                # Small delay between actions
                 time.sleep(0.5)
+            return
         
-        print(f"\n{'='*50}")
-        print(f"Sequence complete!")
-        print(f"{'='*50}\n")
-    
-    def execute_single(self, intent):
-        """Execute a single action based on parsed intent with friction handling"""
+        # Single action handling
         friction_type = intent.get('friction_type', 'none')
         action = intent.get('action', 'unknown')
         distance = intent.get('distance', 1.0)
         text = intent.get('text', '')
+        target_object = intent.get('target_object', None)
         
         print(f"Executing - Friction: {friction_type}, Action: {action}")
         
-        # Handle friction first if present
+        # Handle friction types
         if friction_type != 'none' and text:
+            print(f"Applying {friction_type} friction: {text}")
             self.robot.speak(text)
-            # If action is clarify, we stop here and wait for user response
-            if action == 'clarify':
+            
+            # Probing stops execution to wait for user response
+            if friction_type == 'probing' or action == 'clarify':
                 return
+            
+            # Reflective pause with delay before continuing
+            if friction_type == 'reflective_pause':
+                time.sleep(1.5)
+            
+            # For other friction types (assumption_reveal, overspecification, reinforcement),
+            # we announce and then continue with the action
+            time.sleep(0.5)
         
         # Get the action function and execute it
         action_func = self.actions.get(action, self.unknown_action)
-        action_func(distance=distance, text=text)
+        if action == 'spatial_navigate':
+            action_func(target_object=target_object)
+        else:
+            action_func(distance=distance, text=text)
     
-    def move_forward(self, distance, **kwargs):
-        """Move robot forward"""
-        drive_time_ms = self._calculate_drive_time(distance)
+    def spatial_navigate(self, target_object=None, **kwargs):
+        """Navigate to a target object using vision-based spatial reasoning"""
+        if not self.vision_handler or not self.llm_layer:
+            print("Vision or LLM handler not available")
+            self.robot.speak("Sorry, my vision system is not available")
+            return
+        
+        if not target_object:
+            print("No target object specified")
+            self.robot.speak("I need to know what object to navigate towards")
+            return
+        
+        print(f"Starting spatial navigation towards: {target_object}")
+        self.robot.speak(f"Let me find the {target_object}")
+        
+        # Capture and encode image
+        image_data = self.vision_handler.capture_and_encode()
+        
+        if not image_data:
+            self.robot.speak("Sorry, I couldn't capture an image")
+            return
+        
+        # Analyze the scene with GPT-5 nano
+        analysis = self.llm_layer.analyze_spatial_scene(image_data, target_object)
+        
+        if not analysis:
+            self.robot.speak("Sorry, I had trouble analyzing the scene")
+            return
+        
+        # Handle the results
+        if not analysis['found']:
+            # Object not visible
+            print(f"Object not found: {analysis['reasoning']}")
+            self.robot.speak(f"I don't see the {target_object} in front of me. Could you let me know which direction it is?")
+            return
+        
+        # Object found - execute navigation
+        direction = analysis['direction']
+        turn_degrees = analysis.get('turn_degrees', 0)
+        distance = analysis['distance']
+        confidence = analysis['confidence']
+        
+        print(f"Navigation plan - Direction: {direction}, Turn: {turn_degrees}°, Distance: {distance}m, Confidence: {confidence}")
+        
+        # Announce the plan
+        if direction == "straight":
+            self.robot.speak(f"I see the {target_object} straight ahead, about {distance:.1f} meters away. Moving towards it.")
+        elif direction == "left":
+            self.robot.speak(f"I see the {target_object} to my left. Turning and then moving towards it.")
+        elif direction == "right":
+            self.robot.speak(f"I see the {target_object} to my right. Turning and then moving towards it.")
+        
+        time.sleep(1)
+        
+        # Execute the navigation
+        if direction != "straight":
+            # Turn towards the object first
+            turn_time = self._calculate_turn_time(abs(turn_degrees))
+            if direction == "left":
+                print(f"Turning left {abs(turn_degrees)} degrees")
+                self.robot.drive_time(0, -100, turn_time)
+            else:  # right
+                print(f"Turning right {turn_degrees} degrees")
+                self.robot.drive_time(0, 100, turn_time)
+            
+            time.sleep(turn_time / 1000 + 0.5)
+        
+        # Move forward towards the object
+        # Reduce distance slightly to avoid collision
+        safe_distance = max(0.3, distance - 0.5)
+        drive_time = self._calculate_drive_time(safe_distance)
+        print(f"Moving forward {safe_distance:.1f} meters")
+        self.robot.drive_time(50, 0, drive_time)
+        
+        time.sleep(drive_time / 1000 + 0.5)
+        
+        self.robot.speak(f"I've reached the {target_object}")
+    
+    def move_forward(self, distance=1.0, **kwargs):
+        """Move forward by specified distance"""
         print(f"Moving forward {distance} meter(s)")
         self.robot.speak(f"Moving forward {distance} meters")
-        self.robot.drive_time(50, 0, drive_time_ms)
-        time.sleep(2)
+        drive_time = self._calculate_drive_time(distance)
+        self.robot.drive_time(50, 0, drive_time)
     
-    def move_backward(self, distance, **kwargs):
-        """Move robot backward"""
-        drive_time_ms = self._calculate_drive_time(distance)
+    def move_backward(self, distance=1.0, **kwargs):
+        """Move backward by specified distance"""
         print(f"Moving backward {distance} meter(s)")
         self.robot.speak(f"Moving backward {distance} meters")
-        self.robot.drive_time(-50, 0, drive_time_ms)
-        time.sleep(2)
+        drive_time = self._calculate_drive_time(distance)
+        self.robot.drive_time(-50, 0, drive_time)
     
-    def move_left(self, distance, **kwargs):
-        """Turn left 90 degrees then move forward"""
-        print(f"Turning left and moving {distance} meter(s)")
-        self.robot.speak(f"Turning left and moving {distance} meters")
-        
-        # Turn left 90 degrees
-        self.robot.drive_time(0, 100, 4300)
-        time.sleep(4.5)  # Wait for turn to complete
-        
-        # Move forward
-        drive_time_ms = self._calculate_drive_time(distance)
-        self.robot.drive_time(50, 0, drive_time_ms)
+    def move_left(self, distance=1.0, **kwargs):
+        """Strafe left by specified distance"""
+        print(f"Going left {distance} meter(s)")
+        self.robot.speak(f"Going left {distance} meters")
+        # Turn left, move forward, turn back right
+        self.robot.drive_time(0, -100, 2150)  # ~45 degrees
+        time.sleep(2.5)
+        drive_time = self._calculate_drive_time(distance)
+        self.robot.drive_time(50, 0, drive_time)
+        time.sleep(drive_time / 1000 + 0.5)
+        self.robot.drive_time(0, 100, 2150)  # Turn back
     
-    def move_right(self, distance, **kwargs):
-        """Turn right 90 degrees then move forward"""
-        print(f"Turning right and moving {distance} meter(s)")
-        self.robot.speak(f"Turning right and moving {distance} meters")
-        
-        # Turn right 90 degrees
+    def move_right(self, distance=1.0, **kwargs):
+        """Strafe right by specified distance"""
+        print(f"Going right {distance} meter(s)")
+        self.robot.speak(f"Going right {distance} meters")
+        # Turn right, move forward, turn back left
+        self.robot.drive_time(0, 100, 2150)  # ~45 degrees
+        time.sleep(2.5)
+        drive_time = self._calculate_drive_time(distance)
+        self.robot.drive_time(50, 0, drive_time)
+        time.sleep(drive_time / 1000 + 0.5)
+        self.robot.drive_time(0, -100, 2150)  # Turn back
+    
+    def turn_left(self, distance=1.0, **kwargs):
+        """Turn left 90 degrees"""
+        print("Turning left 90 degrees")
+        self.robot.speak("Turning left")
         self.robot.drive_time(0, -100, 4300)
-        time.sleep(4.5)  # Wait for turn to complete
-        
-        # Move forward
-        drive_time_ms = self._calculate_drive_time(distance)
-        self.robot.drive_time(50, 0, drive_time_ms)
     
-    def turn_left(self, distance, **kwargs):
-        """Turn left by specified degrees (distance parameter represents degrees)"""
-        degrees = distance if distance != 1.0 else 90  # Default to 90 if not specified
-        turn_time_ms = self._calculate_turn_time(degrees)
-        print(f"Turning left {degrees} degrees")
-        self.robot.speak(f"Turning left {degrees} degrees")
-        self.robot.drive_time(0, 100, turn_time_ms)
-        time.sleep(turn_time_ms / 1000 + 0.2)  # Wait for turn to complete with small buffer
-    
-    def turn_right(self, distance, **kwargs):
-        """Turn right by specified degrees (distance parameter represents degrees)"""
-        degrees = distance if distance != 1.0 else 90  # Default to 90 if not specified
-        turn_time_ms = self._calculate_turn_time(degrees)
-        print(f"Turning right {degrees} degrees")
-        self.robot.speak(f"Turning right {degrees} degrees")
-        self.robot.drive_time(0, -100, turn_time_ms)
-        time.sleep(turn_time_ms / 1000 + 0.2)  # Wait for turn to complete with small buffer
+    def turn_right(self, distance=1.0, **kwargs):
+        """Turn right 90 degrees"""
+        print("Turning right 90 degrees")
+        self.robot.speak("Turning right")
+        self.robot.drive_time(0, 100, 4300)
     
     def stop(self, **kwargs):
-        """Stop robot movement"""
+        """Stop all movement"""
         print("Stopping")
         self.robot.speak("Stopping")
         self.robot.stop()
     
-    def speak(self, text, **kwargs):
-        """Make robot speak the provided text"""
-        if not text:
-            text = "I don't know what to say"
-        print(f"Speaking: {text}")
-        self.robot.speak(text)
+    def speak(self, text='', **kwargs):
+        """Speak the provided text"""
+        if text:
+            print(f"Speaking: {text}")
+            self.robot.speak(text)
     
-    def clarify(self, text, **kwargs):
-        """Ask clarifying question - same as speak but semantically different"""
-        if not text:
-            text = "Could you please clarify what you'd like me to do?"
+    def clarify(self, text='', **kwargs):
+        """Request clarification from user"""
         print(f"Requesting clarification: {text}")
         self.robot.speak(text)
     

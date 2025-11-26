@@ -6,6 +6,7 @@ import speech_recognition as sr
 import requests
 import os
 
+#whisper ai
 
 class SpeechHandler:
     def __init__(self, robot_ip):
