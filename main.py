@@ -1,7 +1,7 @@
 """
 Main entry point for Misty robot EmbodiedPF system
 Handles configuration and startup
-Uses Groq (Llama) for text parsing and OpenAI (GPT-5 nano) for vision
+Uses GPT-5 nano as unified VLM for both text and vision
 """
 from model import MistyController
 import os
@@ -12,29 +12,29 @@ load_dotenv()
 
 # Configuration
 IP_ADDRESS = "172.20.10.2"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # For GPT-5 nano vision
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # For GPT-5 nano (text + vision)
 
 # TEST MODE: Set to True to type commands instead of using voice
 TEST_MODE = True  # Change to False for normal voice mode
+
+# LAPTOP MICROPHONE MODE: Set to True to use laptop mic instead of Misty's mic
+# Only applies when TEST_MODE = False
+USE_LAPTOP_MIC = True  # Change to False to use Misty's built-in microphone
 
 
 def main():
     """Main entry point"""
     
     # Validate configuration
-    if not GROQ_API_KEY:
-        print("Error: GROQ_API_KEY not found in environment variables")
-        return
-    
     if not OPENAI_API_KEY:
-        print("Warning: OPENAI_API_KEY not found. Vision features will be disabled.")
+        print("Error: OPENAI_API_KEY not found in environment variables")
+        return
     
     # Create controller
     controller = MistyController(
         ip_address=IP_ADDRESS,
-        groq_api_key=GROQ_API_KEY,
-        openai_api_key=OPENAI_API_KEY  # Changed from claude_api_key
+        openai_api_key=OPENAI_API_KEY,
+        use_laptop_mic=USE_LAPTOP_MIC if not TEST_MODE else False
     )
     
     # Run controller

@@ -1,6 +1,7 @@
 """
 Action executor module
 Defines and executes all robot actions with positive friction support and spatial navigation
+Now simplified since vision analysis happens before action execution
 """
 import time
 
@@ -49,6 +50,7 @@ class ActionExecutor:
         distance = intent.get('distance', 1.0)
         text = intent.get('text', '')
         target_object = intent.get('target_object', None)
+        turn_degrees = intent.get('turn_degrees', 0)
         
         print(f"Executing - Friction: {friction_type}, Action: {action}")
         
@@ -71,88 +73,63 @@ class ActionExecutor:
         
         # Get the action function and execute it
         action_func = self.actions.get(action, self.unknown_action)
+        
         if action == 'spatial_navigate':
-            action_func(target_object=target_object)
+            # Pass all spatial navigation parameters
+            action_func(
+                target_object=target_object,
+                distance=distance,
+                turn_degrees=turn_degrees
+            )
         else:
             action_func(distance=distance, text=text)
     
-    def spatial_navigate(self, target_object=None, **kwargs):
-        """Navigate to a target object using vision-based spatial reasoning"""
-        if not self.vision_handler or not self.llm_layer:
-            print("Vision or LLM handler not available")
-            self.robot.speak("Sorry, my vision system is not available")
-            return
-        
+    def spatial_navigate(self, target_object=None, distance=0, turn_degrees=0, **kwargs):
+        """
+        Navigate to a target object using pre-analyzed vision data
+        Vision analysis has already been done by the LLM layer, so we just execute the plan
+        """
         if not target_object:
             print("No target object specified")
             self.robot.speak("I need to know what object to navigate towards")
             return
         
-        print(f"Starting spatial navigation towards: {target_object}")
-        self.robot.speak(f"Let me find the {target_object}")
-        
-        # Capture and encode image
-        image_data = self.vision_handler.capture_and_encode()
-        
-        if not image_data:
-            self.robot.speak("Sorry, I couldn't capture an image")
-            return
-        
-        # Analyze the scene with GPT-5 nano
-        analysis = self.llm_layer.analyze_spatial_scene(image_data, target_object)
-        
-        if not analysis:
-            self.robot.speak("Sorry, I had trouble analyzing the scene")
-            return
-        
-        # Handle the results
-        if not analysis['found']:
-            # Object not visible
-            print(f"Object not found: {analysis['reasoning']}")
-            self.robot.speak(f"I don't see the {target_object} in front of me. Could you let me know which direction it is?")
-            return
-        
-        # Object found - execute navigation
-        direction = analysis['direction']
-        turn_degrees = analysis.get('turn_degrees', 0)
-        distance = analysis['distance']
-        confidence = analysis['confidence']
-        
-        print(f"Navigation plan - Direction: {direction}, Turn: {turn_degrees}°, Distance: {distance}m, Confidence: {confidence}")
+        print(f"Executing spatial navigation towards: {target_object}")
+        print(f"Navigation plan - Turn: {turn_degrees}°, Distance: {distance}m")
         
         # Announce the plan
-        if direction == "straight":
-            self.robot.speak(f"I see the {target_object} straight ahead, about {distance:.1f} meters away. Moving towards it.")
-        elif direction == "left":
-            self.robot.speak(f"I see the {target_object} to my left. Turning and then moving towards it.")
-        elif direction == "right":
-            self.robot.speak(f"I see the {target_object} to my right. Turning and then moving towards it.")
+        if turn_degrees == 0:
+            self.robot.speak(f"Moving towards the {target_object} straight ahead")
+        elif turn_degrees < 0:
+            self.robot.speak(f"Turning left and moving towards the {target_object}")
+        else:
+            self.robot.speak(f"Turning right and moving towards the {target_object}")
         
         time.sleep(1)
         
-        # Execute the navigation
-        if direction != "straight":
-            # Turn towards the object first
+        # Execute the turn if needed
+        if turn_degrees != 0:
             turn_time = self._calculate_turn_time(abs(turn_degrees))
-            if direction == "left":
+            if turn_degrees < 0:  # Left turn
                 print(f"Turning left {abs(turn_degrees)} degrees")
-                self.robot.drive_time(0, -100, turn_time)
-            else:  # right
-                print(f"Turning right {turn_degrees} degrees")
                 self.robot.drive_time(0, 100, turn_time)
+            else:  # Right turn
+                print(f"Turning right {turn_degrees} degrees")
+                self.robot.drive_time(0, -100, turn_time)
             
             time.sleep(turn_time / 1000 + 0.5)
         
-        # Move forward towards the object
-        # Reduce distance slightly to avoid collision
-        safe_distance = max(0.3, distance - 0.5)
-        drive_time = self._calculate_drive_time(safe_distance)
-        print(f"Moving forward {safe_distance:.1f} meters")
-        self.robot.drive_time(50, 0, drive_time)
-        
-        time.sleep(drive_time / 1000 + 0.5)
-        
-        self.robot.speak(f"I've reached the {target_object}")
+        # Move forward if distance > 0
+        if distance > 0:
+            # Reduce distance slightly to avoid collision
+            safe_distance = max(0.3, distance - 0.5)
+            drive_time = self._calculate_drive_time(safe_distance)
+            print(f"Moving forward {safe_distance:.1f} meters")
+            self.robot.drive_time(50, 0, drive_time)
+            
+            time.sleep(drive_time / 1000 + 0.5)
+            
+            self.robot.speak(f"I've reached the {target_object}")
     
     def move_forward(self, distance=1.0, **kwargs):
         """Move forward by specified distance"""
@@ -261,7 +238,14 @@ class ActionExecutor:
     def _calculate_turn_time(self, degrees):
         """Calculate turn time in milliseconds based on degrees
         
+        The robot's turning acceleration is non-linear - it starts slower and 
+        speeds up over time. This creates a relationship closer to sqrt(x) rather
+        than linear.
+        
         Calibration: 4300ms at angular speed 100 = 90 degrees
-        Therefore: time = (degrees / 90) * 4300
+        Using sqrt relationship: time = k * sqrt(degrees)
+        Where k = 4300 / sqrt(90) ≈ 453.15
         """
-        return int((degrees / 90.0) * 4300)
+        import math
+        k = 4300 / math.sqrt(90)  # ≈ 453.15
+        return int(k * math.sqrt(degrees))

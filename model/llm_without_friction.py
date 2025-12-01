@@ -1,6 +1,6 @@
 """
-LLM layer using GPT-5 nano as unified VLM for both intent parsing and vision
-Combines text and vision analysis in a single multimodal call
+LLM layer using GPT-5 nano WITHOUT positive friction for control testing
+Makes best-guess assumptions rather than asking clarifying questions
 """
 from openai import OpenAI
 import json
@@ -12,12 +12,12 @@ class LLMLayer:
         self.openai_client = OpenAI(api_key=openai_api_key)
         self.vision_model = "gpt-5-nano-2025-08-07"
         self.conversation_history = []
-        print("Unified VLM enabled with GPT-5 nano")
+        print("Unified VLM enabled with GPT-5 nano (NO FRICTION MODE)")
     
     def parse_intent_with_vision(self, user_speech, image_data_base64=None):
         """
         Unified function that uses GPT-5 nano to parse user intent with optional vision
-        Combines text parsing, spatial reasoning, and positive friction in one call
+        NO POSITIVE FRICTION - makes best guesses and executes immediately
         
         Args:
             user_speech: The user's spoken/typed command
@@ -27,11 +27,10 @@ class LLMLayer:
             dict with:
                 - action: the action to take
                 - distance: distance parameter
-                - text: friction message or speech text
-                - friction_type: type of friction applied
+                - text: speech text (minimal)
                 - target_object: for spatial_navigate actions
                 - turn_degrees: for spatial navigation
-                - clarification_needed: specific clarification question if needed
+                - confidence: confidence level
         """
         print(f"Parsing intent for: '{user_speech}'")
         
@@ -42,44 +41,35 @@ class LLMLayer:
                 "content": f"User said: \"{user_speech}\""
             })
             
-            # Build the unified system prompt (more concise)
-            system_prompt = """You are Misty, a robot with vision that parses commands and decides when to ask clarifying questions.
+            # Build the system prompt WITHOUT friction mechanisms
+            system_prompt = """You are Misty, a robot with vision that parses commands into executable actions.
 
-# Actions: forward, backward, left, right, turn_left, turn_right, stop, describe_vision, spatial_navigate, speak, clarify, unknown
-
-# Friction Types (when to slow down and ask):
-- **probing**: Ask questions for clarity (ambiguous references, multiple objects visible, missing safety info)
-- **assumption_reveal**: State your assumptions transparently
-- **overspecification**: Confirm exact parameters
-- **reflective_pause**: Show you're thinking
-- **reinforcement**: Restate for emphasis
+# Actions: forward, backward, left, right, turn_left, turn_right, stop, describe_vision, spatial_navigate, speak, unknown
 
 # Spatial Commands with Vision:
 If user says "go to X" AND you see an image:
-1. Count instances of X in the image
-2. If MULTIPLE found → friction_type: "probing", action: "clarify", ask which one with distinguishing details
-3. If ONE found → action: "spatial_navigate", estimate turn_degrees (negative=left, positive=right, 0=straight) and distance
-4. If NOT found → friction_type: "probing", action: "clarify", ask for location
+1. Identify X in the image
+2. If multiple instances of X are visible, choose the one based on your reasoning.
+3. If X is not straight in front of you, estimate turn_degrees (negative=left, positive=right, 0=straight) necessary to face straight at X, and then estimate the distance to the selected object
+4. Return action: "spatial_navigate" with the target object
 
 # Multi-action: "X and then Y" → {"actions": [{"action": "X"}, {"action": "Y"}]}
 
 # Output JSON:
 {
-  "friction_type": "none/probing/assumption_reveal/overspecification/reflective_pause/reinforcement",
-  "action": "action_name or clarify",
+  "action": "action_name",
   "distance": 0,
-  "text": "what to say",
+  "text": "brief acknowledgment",
   "target_object": "object name or null",
   "turn_degrees": 0,
-  "clarification_needed": "question or null",
   "confidence": "high/medium/low"
 }
 
 Examples:
-- "move forward 2m" → {"friction_type":"none","action":"forward","distance":2,"text":"","target_object":null,"turn_degrees":0,"clarification_needed":null}
-- "go to plant" + image shows 1 plant ahead → {"friction_type":"none","action":"spatial_navigate","target_object":"plant","distance":2.0,"turn_degrees":0,"text":"","clarification_needed":null,"confidence":"high"}
-- "go to trash bin" + image shows 2 bins → {"friction_type":"probing","action":"clarify","target_object":"trash bin","distance":0,"turn_degrees":0,"text":"I see two trash bins - the blue one on the left near the door, or the black one on the right by the desk?","clarification_needed":"I see two trash bins - the blue one on the left near the door, or the black one on the right by the desk?","confidence":"high"}
-- "what do you see" → {"friction_type":"none","action":"describe_vision","distance":0,"text":"","target_object":null,"turn_degrees":0,"clarification_needed":null}
+- "move forward 2m" → {"action":"forward","distance":2,"text":"Moving forward","target_object":null,"turn_degrees":0,"confidence":"high"}
+- "go to plant" + image shows 1 plant ahead → {"action":"spatial_navigate","target_object":"plant","distance":2.0,"turn_degrees":0,"text":"Going to the plant","confidence":"high"}
+- "go to cup" + image shows 2 cups → {"action":"spatial_navigate","target_object":"cup","distance":1.5,"turn_degrees":-10,"text":"Going to the cup","confidence":"medium"}
+- "what do you see" → {"action":"describe_vision","distance":0,"text":"","target_object":null,"turn_degrees":0,"confidence":"high"}
 
 Return ONLY valid JSON, nothing else."""
 
@@ -109,7 +99,7 @@ Return ONLY valid JSON, nothing else."""
                         "url": f"data:image/jpeg;base64,{image_data_base64}"
                     }
                 })
-                print("Including vision analysis in intent parsing")
+                print("Including vision analysis in intent parsing (no friction mode)")
             
             # Build full messages list
             messages = [
@@ -129,13 +119,12 @@ Return ONLY valid JSON, nothing else."""
             })
             
             # Call GPT-5 nano
-            print(f"Calling GPT-5 nano with {len(messages)} messages")
+            print(f"Calling GPT-5 nano with {len(messages)} messages (NO FRICTION)")
             
             response = self.openai_client.chat.completions.create(
                 model=self.vision_model,
                 messages=messages,
                 max_completion_tokens=2000
-                # Note: GPT-5 nano doesn't support temperature parameter, uses default of 1
             )
             
             print(f"Response received. Finish reason: {response.choices[0].finish_reason}")
@@ -172,23 +161,23 @@ Return ONLY valid JSON, nothing else."""
                     print(f"Parsed multi-action sequence: {intent['actions']}")
                     return intent
                 
-                # Single action - ensure all fields exist
+                # Single action - ensure all fields exist (no friction fields)
                 result = {
                     'action': intent.get('action', 'unknown'),
                     'distance': intent.get('distance', 0),
                     'text': intent.get('text', ''),
-                    'friction_type': intent.get('friction_type', 'none'),
                     'target_object': intent.get('target_object', None),
                     'turn_degrees': intent.get('turn_degrees', 0),
-                    'clarification_needed': intent.get('clarification_needed', None),
-                    'confidence': intent.get('confidence', 'medium')
+                    'confidence': intent.get('confidence', 'medium'),
+                    # Set friction fields to defaults for compatibility
+                    'friction_type': 'none',
+                    'clarification_needed': None
                 }
                 
                 action = result['action']
-                friction = result['friction_type']
                 target = result['target_object']
                 
-                print(f"Parsed intent - Action: {action}, Target: {target}, Friction: {friction}")
+                print(f"Parsed intent (NO FRICTION) - Action: {action}, Target: {target}")
                 
                 return result
             else:
@@ -197,11 +186,11 @@ Return ONLY valid JSON, nothing else."""
                     'action': 'unknown',
                     'distance': 0,
                     'text': '',
-                    'friction_type': 'none',
                     'target_object': None,
                     'turn_degrees': 0,
-                    'clarification_needed': None,
-                    'confidence': 'low'
+                    'confidence': 'low',
+                    'friction_type': 'none',
+                    'clarification_needed': None
                 }
                 
         except Exception as e:
@@ -212,11 +201,11 @@ Return ONLY valid JSON, nothing else."""
                 'action': 'unknown',
                 'distance': 0,
                 'text': '',
-                'friction_type': 'none',
                 'target_object': None,
                 'turn_degrees': 0,
-                'clarification_needed': None,
-                'confidence': 'low'
+                'confidence': 'low',
+                'friction_type': 'none',
+                'clarification_needed': None
             }
     
     def describe_image(self, image_data_base64):
