@@ -15,11 +15,15 @@ IP_ADDRESS = "172.20.10.2"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # For GPT-5 nano (text + vision)
 
 # TEST MODE: Set to True to type commands instead of using voice
-TEST_MODE = True  # Change to False for normal voice mode
+TEST_MODE = False  # Change to False for normal voice mode
 
 # LAPTOP MICROPHONE MODE: Set to True to use laptop mic instead of Misty's mic
 # Only applies when TEST_MODE = False
-USE_LAPTOP_MIC = True  # Change to False to use Misty's built-in microphone
+USE_LAPTOP_MIC = False  # Change to False to use Misty's built-in microphone
+
+# FRICTION MODE: Set to True to enable positive friction (clarifying questions)
+# Set to False for control test (makes best guesses without asking)
+FRICTION_ENABLED = False  # Change to False to disable positive friction
 
 
 def main():
@@ -30,11 +34,22 @@ def main():
         print("Error: OPENAI_API_KEY not found in environment variables")
         return
     
+    # Display configuration
+    friction_mode = "ENABLED (with clarifying questions)" if FRICTION_ENABLED else "DISABLED (control - no clarifying questions)"
+    print(f"\n=== Configuration ===")
+    print(f"Test Mode: {TEST_MODE}")
+    print(f"Friction Mode: {friction_mode}")
+    if not TEST_MODE:
+        mic_mode = "Laptop" if USE_LAPTOP_MIC else "Misty's built-in"
+        print(f"Microphone: {mic_mode}")
+    print("=" * 40 + "\n")
+    
     # Create controller
     controller = MistyController(
         ip_address=IP_ADDRESS,
         openai_api_key=OPENAI_API_KEY,
-        use_laptop_mic=USE_LAPTOP_MIC if not TEST_MODE else False
+        use_laptop_mic=USE_LAPTOP_MIC if not TEST_MODE else False,
+        friction_enabled=FRICTION_ENABLED
     )
     
     # Run controller

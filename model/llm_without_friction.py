@@ -6,7 +6,7 @@ from openai import OpenAI
 import json
 
 
-class LLMLayer:
+class LLMLayerNoFriction:
     def __init__(self, openai_api_key):
         # GPT-5 nano for unified text + vision processing
         self.openai_client = OpenAI(api_key=openai_api_key)

@@ -6,6 +6,7 @@ Uses GPT-5 nano as unified VLM for both text and vision
 from PythonSDKmain.mistyPy.Robot import Robot
 from model.speech_handler import SpeechHandler
 from model.llm_layer import LLMLayer
+from model.llm_without_friction import LLMLayerNoFriction
 from model.vision_handler import VisionHandler
 from model.action_executor import ActionExecutor
 import time
@@ -17,7 +18,7 @@ class MistyController:
     and handles both voice-based and test mode interactions
     """
     
-    def __init__(self, ip_address, openai_api_key, use_laptop_mic=False):
+    def __init__(self, ip_address, openai_api_key, use_laptop_mic=False, friction_enabled=True):
         """
         Initialize the Misty controller with all necessary modules
         
@@ -25,16 +26,26 @@ class MistyController:
             ip_address: IP address of Misty robot
             openai_api_key: API key for OpenAI (GPT-5 nano)
             use_laptop_mic: If True, use laptop microphone instead of Misty's mic
+            friction_enabled: If True, use LLM with positive friction; if False, use no-friction version
         """
         self.ip_address = ip_address
         self.use_laptop_mic = use_laptop_mic
+        self.friction_enabled = friction_enabled
         
         # Initialize robot
         self.robot = Robot(ip_address)
         
         # Initialize modules
         self.speech_handler = SpeechHandler(ip_address, use_laptop_mic=use_laptop_mic)
-        self.llm_layer = LLMLayer(openai_api_key)
+        
+        # Choose LLM layer based on friction setting
+        if friction_enabled:
+            self.llm_layer = LLMLayer(openai_api_key)
+            print("Using LLM with positive friction enabled")
+        else:
+            self.llm_layer = LLMLayerNoFriction(openai_api_key)
+            print("Using LLM without friction (control mode)")
+        
         self.vision_handler = VisionHandler(self.robot, ip_address)
         self.action_executor = ActionExecutor(
             self.robot, 
@@ -47,7 +58,8 @@ class MistyController:
         self.last_processed_file = None
         
         mic_mode = "Laptop Microphone" if use_laptop_mic else "Misty's Microphone"
-        print(f"Misty controller initialized with GPT-5 nano VLM + {mic_mode}")
+        friction_mode = "with friction" if friction_enabled else "without friction (control)"
+        print(f"Misty controller initialized with GPT-5 nano VLM ({friction_mode}) + {mic_mode}")
     
     def setup_robot(self):
         """Initial robot setup - configure default state"""
@@ -181,6 +193,8 @@ class MistyController:
         
         if test_mode:
             print("\n=== TEST MODE ===")
+            friction_status = "ENABLED" if self.friction_enabled else "DISABLED (control)"
+            print(f"Friction: {friction_status}")
             print("Type commands to test (or 'quit' to exit)")
             print("Examples:")
             print("  - move forward 2 meters")
