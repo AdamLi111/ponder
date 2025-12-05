@@ -32,11 +32,15 @@ class MistyController:
         self.use_laptop_mic = use_laptop_mic
         self.friction_enabled = friction_enabled
         
-        # Initialize robot
+        # Initialize robot FIRST
         self.robot = Robot(ip_address)
         
-        # Initialize modules
-        self.speech_handler = SpeechHandler(ip_address, use_laptop_mic=use_laptop_mic)
+        # Initialize modules - PASS robot instance to speech_handler
+        self.speech_handler = SpeechHandler(
+            ip_address, 
+            robot=self.robot,  # ← CRITICAL: Pass robot instance
+            use_laptop_mic=use_laptop_mic
+        )
         
         # Choose LLM layer based on friction setting
         if friction_enabled:
@@ -64,6 +68,7 @@ class MistyController:
     def setup_robot(self):
         """Initial robot setup - configure default state"""
         print("Setting up Misty...")
+        self.robot.move_head(10, 0, 5)
         self.robot.display_image("e_SleepingZZZ.jpg", 1)
         print("Setup complete")
     
@@ -141,10 +146,11 @@ class MistyController:
     
     def _voice_record_callback(self, data):
         """
-        Internal callback for voice recording events
+        Internal callback for voice recording events from Misty's microphone
         Handles audio transcription and command processing
         """
         print("Voice_Record_Callback triggered!")
+        print(f"Event data: {data}")
         
         # Check if we're already processing
         if self.processing_audio:
@@ -155,8 +161,9 @@ class MistyController:
             # Set processing flag
             self.processing_audio = True
             
-            # Get the audio file path
+            # Get the audio file path from VoiceRecord event
             audio_file = data['message']['filename']
+            print(f"Audio filename from VoiceRecord event: {audio_file}")
             
             # Skip if we just processed this file
             if audio_file == self.last_processed_file:
@@ -237,6 +244,7 @@ class MistyController:
                 print("Press Ctrl+C to stop")
                 
                 # Start listening for wake phrase from Misty
+                # This will now use the proper start_listening() implementation
                 self.speech_handler.start_listening(self._voice_record_callback)
                 
                 # Keep running

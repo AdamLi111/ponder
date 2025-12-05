@@ -23,7 +23,7 @@ USE_LAPTOP_MIC = False  # Change to False to use Misty's built-in microphone
 
 # FRICTION MODE: Set to True to enable positive friction (clarifying questions)
 # Set to False for control test (makes best guesses without asking)
-FRICTION_ENABLED = False  # Change to False to disable positive friction
+FRICTION_ENABLED = True  # Change to False to disable positive friction
 
 
 def main():

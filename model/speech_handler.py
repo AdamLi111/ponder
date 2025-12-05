@@ -14,15 +14,17 @@ import wave
 
 
 class SpeechHandler:
-    def __init__(self, robot_ip, use_laptop_mic=False):
+    def __init__(self, robot_ip, robot=None, use_laptop_mic=False):
         """
         Initialize speech handler
         
         Args:
             robot_ip: IP address of Misty robot
+            robot: Robot SDK instance (needed for Misty's mic)
             use_laptop_mic: If True, use laptop microphone instead of Misty's
         """
         self.robot_ip = robot_ip
+        self.robot = robot  # Store robot instance for SDK calls
         self.recognizer = sr.Recognizer()
         self.temp_audio_path = 'temp_audio.wav'
         self.use_laptop_mic = use_laptop_mic
@@ -249,6 +251,83 @@ class SpeechHandler:
             print(f"Error listening for command: {e}")
             return None
     
+    def start_listening(self, callback_func):
+        """
+        Start listening for wake phrase on Misty's built-in microphone
+        Uses Misty's capture_speech() SDK method with RequireKeyPhrase
+        Registers for VoiceRecord events to get audio files
+        
+        Args:
+            callback_func: Function to call when VoiceRecord event fires
+                          Should accept data dict with 'message']['filename']
+        """
+        if self.use_laptop_mic:
+            print("Error: start_listening() is for Misty's mic. Use listen_continuously() for laptop mic.")
+            return
+        
+        if not self.robot:
+            print("Error: Robot instance not provided to SpeechHandler")
+            return
+        
+        self.callback = callback_func
+        self.is_listening = True
+        
+        print("Starting Misty's speech capture with key phrase requirement...")
+        
+        try:
+            # Import Events for event registration
+            from PythonSDKmain.mistyPy.Events import Events
+            
+            # Define callback as nested function (only 1 argument, no self)
+            def voice_record_handler(data):
+                """Handle VoiceRecord events - this has only ONE argument as required"""
+                print(f"[VoiceRecord Event] Received: {data}")
+                
+                # Check if this was successful
+                if data.get('message', {}).get('success', False):
+                    # Call the user's callback with the full data
+                    if self.callback:
+                        self.callback(data)
+                else:
+                    error_msg = data.get('message', {}).get('errorMessage', 'Unknown error')
+                    print(f"Voice recording failed: {error_msg}")
+            
+            # Register for VoiceRecord events FIRST
+            # This event fires when audio capture is complete
+            print("Registering VoiceRecord event...")
+            self.robot.register_event(
+                event_name='voice_record_event',
+                event_type=Events.VoiceRecord,
+                callback_function=voice_record_handler,  # Use nested function
+                keep_alive=True
+            )
+            print("✓ VoiceRecord event registered")
+            
+            # Now start speech capture with key phrase requirement
+            # This tells Misty to:
+            # 1. Listen for "Hey, Misty"
+            # 2. After detecting it, capture the following speech
+            # 3. Save it to a file (capture_HeyMisty.wav or timestamped version)
+            # 4. Fire a VoiceRecord event with the filename
+            print("Starting speech capture...")
+            
+            result = self.robot.capture_speech(
+                requireKeyPhrase=True,      # Must say "Hey, Misty" first
+                overwriteExisting=False,    # Use timestamped filenames
+                maxSpeechLength=7500,       # 7.5 seconds max
+                silenceTimeout=1500         # 1.5 seconds of silence ends recording
+            )
+            
+            print(f"Capture speech result: {result}")
+            print("✓ Speech capture with key phrase enabled")
+            print("✓ Listening for 'Hey, Misty' followed by command...")
+            print("Ready to receive commands!")
+                
+        except Exception as e:
+            print(f"Error starting Misty microphone listening: {e}")
+            import traceback
+            traceback.print_exc()
+    
     def listen_continuously(self, callback_func):
         """
         Start continuous listening with laptop microphone
@@ -291,6 +370,15 @@ class SpeechHandler:
     def stop_listening(self):
         """Stop continuous listening"""
         self.is_listening = False
+        
+        # Stop Misty's speech capture if using built-in mic
+        if not self.use_laptop_mic and self.robot:
+            try:
+                self.robot.stop_capture_speech()
+                print("Stopped Misty's speech capture")
+            except Exception as e:
+                print(f"Error stopping speech capture: {e}")
+        
         print("Stopped listening")
     
     def transcribe_audio_from_misty(self, audio_filename):
