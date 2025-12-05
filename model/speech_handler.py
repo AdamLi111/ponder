@@ -292,41 +292,62 @@ class SpeechHandler:
                     error_msg = data.get('message', {}).get('errorMessage', 'Unknown error')
                     print(f"Voice recording failed: {error_msg}")
             
-            # Register for VoiceRecord events FIRST
+            # Register for VoiceRecord events FIRST (only register once)
             # This event fires when audio capture is complete
             print("Registering VoiceRecord event...")
             self.robot.register_event(
                 event_name='voice_record_event',
                 event_type=Events.VoiceRecord,
                 callback_function=voice_record_handler,  # Use nested function
-                keep_alive=True
+                keep_alive=True  # CRITICAL: Keep event alive for multiple captures
             )
             print("✓ VoiceRecord event registered")
             
-            # Now start speech capture with key phrase requirement
-            # This tells Misty to:
-            # 1. Listen for "Hey, Misty"
-            # 2. After detecting it, capture the following speech
-            # 3. Save it to a file (capture_HeyMisty.wav or timestamped version)
-            # 4. Fire a VoiceRecord event with the filename
-            print("Starting speech capture...")
-            
-            result = self.robot.capture_speech(
-                requireKeyPhrase=True,      # Must say "Hey, Misty" first
-                overwriteExisting=False,    # Use timestamped filenames
-                maxSpeechLength=7500,       # 7.5 seconds max
-                silenceTimeout=1500         # 1.5 seconds of silence ends recording
-            )
-            
-            print(f"Capture speech result: {result}")
-            print("✓ Speech capture with key phrase enabled")
-            print("✓ Listening for 'Hey, Misty' followed by command...")
-            print("Ready to receive commands!")
+            # Start the first capture
+            self._start_capture()
                 
         except Exception as e:
             print(f"Error starting Misty microphone listening: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _start_capture(self):
+        """
+        Internal method to start/restart speech capture
+        Can be called multiple times for continuous listening
+        """
+        try:
+            print("Starting speech capture (listening for 'Hey Misty')...")
+            
+            result = self.robot.capture_speech(
+                requireKeyPhrase=True,      # Must say "Hey, Misty" first
+                overwriteExisting=False,    # Use timestamped filenames
+                maxSpeechLength=10000,      # 10 seconds max (increased from 7.5)
+                silenceTimeout=2000         # 2 seconds of silence ends recording (increased from 1.5)
+            )
+            
+            print(f"✓ Speech capture enabled - waiting for 'Hey Misty'...")
+            
+        except Exception as e:
+            print(f"Error starting speech capture: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def restart_listening(self):
+        """
+        Restart speech capture after processing a command
+        This enables Misty to listen for the next 'Hey Misty' command
+        """
+        if not self.is_listening:
+            print("Not currently listening, ignoring restart request")
+            return
+        
+        # Small delay to avoid capturing robot's own speech
+        import time
+        time.sleep(1.0)
+        
+        print("\n[Restarting listening] Ready for next command...")
+        self._start_capture()
     
     def listen_continuously(self, callback_func):
         """
@@ -384,30 +405,66 @@ class SpeechHandler:
     def transcribe_audio_from_misty(self, audio_filename):
         """Download and transcribe audio file from Misty"""
         try:
+            # Small delay to ensure file is fully written to disk
+            import time
+            from urllib.parse import quote
+            
+            time.sleep(0.5)
+            
+            # URL encode the filename (handles spaces and special characters)
+            encoded_filename = quote(audio_filename)
+            
             # Download the audio file from Misty
-            audio_url = f"http://{self.robot_ip}/api/audio?FileName={audio_filename}"
+            audio_url = f"http://{self.robot_ip}/api/audio?FileName={encoded_filename}"
             print(f"Downloading audio from: {audio_url}")
+            print(f"Original filename: {audio_filename}")
             
             response = requests.get(audio_url)
             if response.status_code != 200:
                 print(f"Failed to download audio: {response.status_code}")
+                print(f"Response: {response.text}")
                 return None
             
-            # Save audio temporarily
-            with open(self.temp_audio_path, 'wb') as f:
+            # Debug: Check file size
+            file_size = len(response.content)
+            print(f"Downloaded audio file size: {file_size} bytes")
+            
+            if file_size < 100:
+                print(f"WARNING: Audio file is very small ({file_size} bytes) - might be empty or corrupted")
+                return None
+            
+            # Save audio temporarily with unique name to avoid file locking issues
+            temp_path = f"{self.temp_audio_path.replace('.wav', '')}_{int(time.time())}.wav"
+            print(f"Saving to temporary file: {temp_path}")
+            
+            with open(temp_path, 'wb') as f:
                 f.write(response.content)
             
+            print(f"Audio file saved ({file_size} bytes), starting transcription...")
+            
             # Transcribe using speech_recognition
-            with sr.AudioFile(self.temp_audio_path) as source:
+            with sr.AudioFile(temp_path) as source:
                 audio = self.recognizer.record(source)
             
             # Use Google Speech Recognition (free)
             try:
                 text = self.recognizer.recognize_google(audio)
                 print(f"Transcribed text: {text}")
+                
+                # Clean up temporary file
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+                
                 return text
             except sr.UnknownValueError:
                 print("Google Speech Recognition could not understand audio")
+                print(f"Audio file details: {file_size} bytes at {temp_path}")
+                
+                # Keep the file for debugging
+                print(f"Keeping problematic audio file for inspection: {temp_path}")
+                
                 return None
             except sr.RequestError as e:
                 print(f"Could not request results from Google Speech Recognition; {e}")

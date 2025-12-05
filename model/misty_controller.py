@@ -68,7 +68,6 @@ class MistyController:
     def setup_robot(self):
         """Initial robot setup - configure default state"""
         print("Setting up Misty...")
-        self.robot.move_head(10, 0, 5)
         self.robot.display_image("e_SleepingZZZ.jpg", 1)
         print("Setup complete")
     
@@ -172,6 +171,10 @@ class MistyController:
             
             self.last_processed_file = audio_file
             
+            # Small delay to ensure file is ready on Misty's filesystem
+            print("Waiting for file to be ready...")
+            time.sleep(0.3)
+            
             # Transcribe the audio
             text = self.speech_handler.transcribe_audio_from_misty(audio_file)
             
@@ -179,12 +182,35 @@ class MistyController:
                 # Process the command
                 self._process_command(text)
             else:
-                print("No text transcribed")
+                print("No text transcribed - file may be empty or corrupted")
+                self.robot.speak("Sorry, I didn't catch that. Please try again.")
+            
+            # CRITICAL: Restart listening for the next command
+            # This allows multi-turn conversation
+            print("\n" + "="*50)
+            print("Command processed. Ready for next command...")
+            print("Say 'Hey Misty' to give another command")
+            print("="*50 + "\n")
+            
+            if not self.use_laptop_mic:
+                # Visual feedback - change LED to indicate ready for next command
+                self.robot.change_led(0, 255, 0)  # Green = ready
+                
+                # Restart speech capture for Misty's mic
+                self.speech_handler.restart_listening()
                 
         except Exception as e:
             print(f"Error in voice callback: {e}")
             import traceback
             traceback.print_exc()
+            
+            # Still try to restart listening even if there was an error
+            if not self.use_laptop_mic:
+                try:
+                    self.robot.change_led(255, 0, 0)  # Red = error
+                    self.speech_handler.restart_listening()
+                except:
+                    pass
         finally:
             # Always clear processing flag
             self.processing_audio = False
