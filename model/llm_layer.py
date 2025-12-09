@@ -55,10 +55,10 @@ class LLMLayer:
 - **reinforcement**: Restate for emphasis
 
 # Spatial Commands with Vision:
-If user says "go to X" AND you see an image:
+If user gives a command that asks you to move towards an object X, for example "go to X" or "go over to X", AND you see an image:
 1. Count instances of X in the image
 2. If MULTIPLE found → friction_type: "probing", action: "clarify", ask which one with distinguishing details
-3. If ONE found → action: "spatial_navigate", estimate turn_degrees (negative=left, positive=right, 0=straight) and distance
+3. If ONE found → action: "spatial_navigate", estimate turn_degrees based on the location of X relative to the center y-axis of the image (negative=left, positive=right, 0=straight) and distance
 4. If NOT found → friction_type: "probing", action: "clarify", ask for location
 
 # Multi-action: "X and then Y" → {"actions": [{"action": "X"}, {"action": "Y"}]}

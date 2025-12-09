@@ -14,6 +14,7 @@ class ActionExecutor:
         
         # Action mapping
         self.actions = {
+            # Regular movements
             'forward': self.move_forward,
             'backward': self.move_backward,
             'left': self.move_left,
@@ -21,11 +22,19 @@ class ActionExecutor:
             'turn_left': self.turn_left,
             'turn_right': self.turn_right,
             'stop': self.stop,
+
+            # Spoken actions
             'speak': self.speak,
             'clarify': self.clarify,
+
+            # Visual parsing
             'describe_vision': self.describe_vision,
+
+            # Spatial navigation
             'spatial_navigate': self.spatial_navigate,
             'unknown': self.unknown_action
+
+            # 
         }
     
     def execute(self, intent):
