@@ -4,6 +4,7 @@ Defines and executes all robot actions with positive friction support and spatia
 Now simplified since vision analysis happens before action execution
 """
 import time
+import math
 
 
 class ActionExecutor:
@@ -39,18 +40,33 @@ class ActionExecutor:
     
     def execute(self, intent):
         """Execute an action based on parsed intent with friction handling"""
-        # Handle multi-action sequences
-        if 'actions' in intent:
+        # Handle multi-action sequences (only if array is non-empty)
+        if 'actions' in intent and len(intent.get('actions', [])) > 0:
+            friction_type = intent.get('friction_type', 'none')
+            text = intent.get('text', '')
+            
+            # Announce the plan if there's text
+            if text:
+                print(f"Announcing plan: {text}")
+                self.robot.speak(text)
+                time.sleep(0.5)
+            
             print(f"Executing multi-action sequence")
             for action_item in intent['actions']:
                 action = action_item.get('action', 'unknown')
                 distance = action_item.get('distance', 1.0)
+                turn_degrees = action_item.get('turn_degrees', 0)
                 
                 action_func = self.actions.get(action, self.unknown_action)
-                action_func(distance=distance)
+                
+                # Call the appropriate function based on action type
+                if action == 'turn_left' or action == 'turn_right':
+                    execution_time = action_func(degrees=turn_degrees, speak=True)  # Don't speak each step
+                else:
+                    execution_time = action_func(distance=distance, turn_degrees=turn_degrees)
                 
                 # Small delay between actions
-                time.sleep(0.5)
+                time.sleep(execution_time / 1000 + 0.5)
             return
         
         # Single action handling
@@ -90,6 +106,8 @@ class ActionExecutor:
                 distance=distance,
                 turn_degrees=turn_degrees
             )
+        elif action == 'turn_left' or action == 'turn_right':
+            action_func(degrees=turn_degrees, speak=True)
         else:
             action_func(distance=distance, text=text)
     
@@ -116,17 +134,12 @@ class ActionExecutor:
         
         time.sleep(1)
         
-        # Execute the turn if needed
+        # Execute the turn if needed using refactored turn methods
         if turn_degrees != 0:
-            turn_time = self._calculate_turn_time(abs(turn_degrees))
             if turn_degrees < 0:  # Left turn
-                print(f"Turning left {abs(turn_degrees)} degrees")
-                self.robot.drive_time(0, 100, turn_time)
+                self.turn_left(degrees=abs(turn_degrees), speak=False)
             else:  # Right turn
-                print(f"Turning right {turn_degrees} degrees")
-                self.robot.drive_time(0, -100, turn_time)
-            
-            time.sleep(turn_time / 1000 + 0.5)
+                self.turn_right(degrees=turn_degrees, speak=False)
         
         # Move forward if distance > 0
         if distance > 0:
@@ -146,6 +159,7 @@ class ActionExecutor:
         self.robot.speak(f"Moving forward {distance} meters")
         drive_time = self._calculate_drive_time(distance)
         self.robot.drive_time(50, 0, drive_time)
+        return drive_time
     
     def move_backward(self, distance=1.0, **kwargs):
         """Move backward by specified distance"""
@@ -153,6 +167,7 @@ class ActionExecutor:
         self.robot.speak(f"Moving backward {distance} meters")
         drive_time = self._calculate_drive_time(distance)
         self.robot.drive_time(-50, 0, drive_time)
+        return drive_time
     
     def move_left(self, distance=1.0, **kwargs):
         """Strafe left by specified distance"""
@@ -165,6 +180,7 @@ class ActionExecutor:
         self.robot.drive_time(50, 0, drive_time)
         time.sleep(drive_time / 1000 + 0.5)
         self.robot.drive_time(0, 100, 2150)  # Turn back
+        return drive_time
     
     def move_right(self, distance=1.0, **kwargs):
         """Strafe right by specified distance"""
@@ -177,18 +193,31 @@ class ActionExecutor:
         self.robot.drive_time(50, 0, drive_time)
         time.sleep(drive_time / 1000 + 0.5)
         self.robot.drive_time(0, -100, 2150)  # Turn back
+        return drive_time
     
-    def turn_left(self, distance=1.0, **kwargs):
-        """Turn left 90 degrees"""
-        print("Turning left 90 degrees")
-        self.robot.speak("Turning left")
-        self.robot.drive_time(0, -100, 4300)
+    def turn_left(self, degrees, speak=True, **kwargs):
+        if not degrees:
+            print("no turn degree specified")
+        """Turn left by specified degrees (default 90)"""
+        print(f"Turning left {degrees} degrees")
+        if speak:
+            self.robot.speak(f"Turning left {degrees} degrees")
+        
+        turn_time = self._calculate_turn_time(degrees)
+        self.robot.drive_time(0, 100, turn_time)
+        return turn_time
     
-    def turn_right(self, distance=1.0, **kwargs):
-        """Turn right 90 degrees"""
-        print("Turning right 90 degrees")
-        self.robot.speak("Turning right")
-        self.robot.drive_time(0, 100, 4300)
+    def turn_right(self, degrees, speak=True, **kwargs):
+        if not degrees:
+            print("no turn degree specified")
+        """Turn right by specified degrees (default 90)"""
+        print(f"Turning right {degrees} degrees")
+        if speak:
+            self.robot.speak(f"Turning right {degrees} degrees")
+        
+        turn_time = self._calculate_turn_time(degrees)
+        self.robot.drive_time(0, -100, turn_time)
+        return turn_time
     
     def stop(self, **kwargs):
         """Stop all movement"""
@@ -240,9 +269,17 @@ class ActionExecutor:
     def _calculate_drive_time(self, distance):
         """Calculate drive time in milliseconds based on distance
         
-        Approximate: 0.5 meters per second at speed 50
+        The robot's driving acceleration is non-linear - it starts slower and 
+        speeds up over time. Need to balance giving more time for both short 
+        distances (due to acceleration) and long distances.
+        
+        Calibration: Needs testing, but using base of 2500ms per meter
+        Using power relationship: time = k * distance^exponent
+        Exponent = 0.7 balances short/long distance needs
         """
-        return int((distance / 0.5) * 1000)
+        exponent = 0.5  # Adjust between 0.5-1.0 based on testing
+        k = 2500 / math.pow(1, exponent)  # Base calibration constant
+        return int(k * math.pow(distance, exponent))
     
     def _calculate_turn_time(self, degrees):
         """Calculate turn time in milliseconds based on degrees
@@ -255,6 +292,5 @@ class ActionExecutor:
         Using sqrt relationship: time = k * sqrt(degrees)
         Where k = 4300 / sqrt(90) ≈ 453.15
         """
-        import math
         k = 4300 / math.sqrt(90)  # ≈ 453.15
         return int(k * math.sqrt(degrees))

@@ -23,7 +23,7 @@ USE_LAPTOP_MIC = False
 
 # FRICTION MODE: Set to True to enable positive friction (clarifying questions)
 # Set to False for control test
-FRICTION_ENABLED = False 
+FRICTION_ENABLED = True 
 
 
 def main():

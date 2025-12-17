@@ -68,7 +68,8 @@ class MistyController:
     def setup_robot(self):
         """Initial robot setup - configure default state"""
         print("Setting up Misty...")
-        self.robot.display_image("e_SleepingZZZ.jpg", 1)
+        self.robot.move_head(0, 0, 0)
+        self.robot.display_image("e_Amazement.jpg")
         print("Setup complete")
     
     def _seems_like_spatial_command(self, speech_text):
@@ -79,7 +80,7 @@ class MistyController:
         spatial_keywords = [
             'go to', 'go over to', 'move to', 'move towards', 
             'navigate to', 'walk to', 'approach', 'head to',
-            'find the', 'get to'
+            'find the', 'get to', 'move', 'turn'
         ]
         
         text_lower = speech_text.lower()

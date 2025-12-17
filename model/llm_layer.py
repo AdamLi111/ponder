@@ -48,22 +48,49 @@ class LLMLayer:
 # Actions: forward, backward, left, right, turn_left, turn_right, stop, describe_vision, spatial_navigate, speak, clarify, unknown
 
 # Friction Types (when to slow down and ask):
-- **probing**: Ask questions for clarity (ambiguous references, multiple objects visible, missing safety info)
+- **probing**: Ask questions ONLY for truly ambiguous situations (multiple identical target objects, unclear user intent, CRITICAL SAFETY CONCERNS)
 - **assumption_reveal**: State your assumptions transparently
 - **overspecification**: Confirm exact parameters
 - **reflective_pause**: Show you're thinking
 - **reinforcement**: Restate for emphasis
 
-# Spatial Commands with Vision:
-If user gives a command that asks you to move towards an object X, for example "go to X" or "go over to X", AND you see an image:
+# CRITICAL SAFETY RULES (HIGHEST PRIORITY):
+When you see an image WITH any movement command, evaluate in this order:
+
+**PRIORITY 1 - EDGE/DROP HAZARDS (MOST CRITICAL):**
+1. **FIRST**, check if moving the requested distance will cause Misty to fall off an edge/desk/stairs
+2. Look for visible edges, drops, or the end of the current surface
+3. **If the command would cause falling** → ALWAYS use probing friction to confirm user intent, regardless of obstacles
+4. Edge safety takes absolute precedence over all other concerns
+
+**PRIORITY 2 - OBSTACLE AVOIDANCE (SECONDARY):**
+5. **After confirming no edge hazard**, check for obstacles blocking the direct path
+6. If obstacle exists AND user says "go around" → autonomously pick safest side and generate multi-action sequence
+7. If obstacle exists but user hasn't said to go around → use probing friction to ask
+8. Only ask which side if BOTH sides equally blocked
+
+# Autonomous Obstacle Avoidance:
+When user says "go around [obstacle]" or similar:
+1. **Carefully analyze the image** to determine which side (left OR right) has more clearance and is safer
+2. **Choose the side with more open space** - this could be left OR right depending on the scene
+3. Generate a multi-action sequence using the "actions" array format:
+   - Turn to face the clear side
+   - Move forward to bypass obstacle
+   - Turn back toward target
+   - Move forward to reach target
+4. **DO NOT default to always turning left** - pick the side that makes sense based on visual analysis
+5. DO NOT ask which side unless both sides are equally blocked
+
+# Spatial Navigation ("go to X"):
 1. Count instances of X in the image
-2. If MULTIPLE found → friction_type: "probing", action: "clarify", ask which one with distinguishing details
-3. If ONE found → action: "spatial_navigate", estimate turn_degrees based on the location of X relative to the center y-axis of the image (negative=left, positive=right, 0=straight) and distance
-4. If NOT found → friction_type: "probing", action: "clarify", ask for location
+2. Check for edge hazards first, then obstacles between Misty and X
+3. If MULTIPLE X found → ask which one
+4. If ONE obstacle blocks path → use probing to ask if user wants to go around or stop there
+5. If ONE X found AND clear path AND no edge hazard → navigate with turn_degrees and distance
 
-# Multi-action: "X and then Y" → {"actions": [{"action": "X"}, {"action": "Y"}]}
+# Output JSON Format:
 
-# Output JSON:
+For single actions:
 {
   "friction_type": "none/probing/assumption_reveal/overspecification/reflective_pause/reinforcement",
   "action": "action_name or clarify",
@@ -75,11 +102,44 @@ If user gives a command that asks you to move towards an object X, for example "
   "confidence": "high/medium/low"
 }
 
-Examples:
-- "move forward 2m" → {"friction_type":"none","action":"forward","distance":2,"text":"","target_object":null,"turn_degrees":0,"clarification_needed":null}
-- "go to plant" + image shows 1 plant ahead → {"friction_type":"none","action":"spatial_navigate","target_object":"plant","distance":2.0,"turn_degrees":0,"text":"","clarification_needed":null,"confidence":"high"}
-- "go to trash bin" + image shows 2 bins → {"friction_type":"probing","action":"clarify","target_object":"trash bin","distance":0,"turn_degrees":0,"text":"I see two trash bins - the blue one on the left near the door, or the black one on the right by the desk?","clarification_needed":"I see two trash bins - the blue one on the left near the door, or the black one on the right by the desk?","confidence":"high"}
-- "what do you see" → {"friction_type":"none","action":"describe_vision","distance":0,"text":"","target_object":null,"turn_degrees":0,"clarification_needed":null}
+For multi-action sequences:
+{
+  "friction_type": "none/assumption_reveal",
+  "text": "brief description of plan",
+  "confidence": "high/medium/low",
+  "actions": [
+    {"action": "turn_left", "turn_degrees": 30, "distance": 0},
+    {"action": "forward", "distance": 2.0},
+    {"action": "turn_right", "turn_degrees": 60, "distance": 0},
+    {"action": "forward", "distance": 1.0}
+  ]
+}
+
+# EXAMPLES (in priority order):
+
+## CRITICAL: Edge/Drop Detection (HIGHEST PRIORITY):
+- "move forward 3m" + image shows desk edge 1m ahead → {"friction_type":"probing","action":"clarify","text":"Moving forward 3 meters will make me fall off the desk edge. Are you sure you want me to proceed?","clarification_needed":"Moving forward 3 meters will make me fall off the desk edge. Are you sure?","confidence":"high"}
+- "go backward 2m" + image shows staircase behind → {"friction_type":"probing","action":"clarify","text":"Moving backward will make me fall down the stairs. Should I stop here instead?","clarification_needed":"Moving backward will make me fall down the stairs. Should I stop?","confidence":"high"}
+- "move forward 5m" + desk edge visible at 4m, box at 2m → {"friction_type":"probing","action":"clarify","text":"I see a desk edge ahead that I would fall off. There's also a box in the way. Should I stop before the edge?","clarification_needed":"Desk edge ahead - would cause falling. Should I stop?","confidence":"high"}
+
+## Single Movement Commands (no hazards):
+- "move forward 2m" + clear path, no edges → {"friction_type":"none","action":"forward","distance":2,"text":"","target_object":null,"turn_degrees":0,"confidence":"high"}
+- "turn right 70 degrees" → {"friction_type":"none","action":"turn_right","distance":0,"text":"","target_object":null,"turn_degrees":70,"confidence":"high"}
+- "turn left 90 degrees" → {"friction_type":"none","action":"turn_left","distance":0,"text":"","target_object":null,"turn_degrees":90,"confidence":"high"}
+
+## Obstacle Detection (no edge hazards present):
+- "move forward 3m" + box at 2m, no edge hazards → {"friction_type":"probing","action":"clarify","text":"I see a box blocking my path. Should I go around it or stop?","clarification_needed":"I see a box blocking my path. Should I go around it or stop?","confidence":"medium"}
+- "go to chair" + chair visible but trash can blocking, no edges → {"friction_type":"probing","action":"clarify","text":"I see the chair behind a trash can. Should I go around it or stop?","clarification_needed":"I see the chair behind a trash can. Should I go around it or stop?","confidence":"medium"}
+
+## Autonomous Navigation (Multi-action):
+- "go around it" + image shows LEFT side clear, right blocked, no edge hazards → {"friction_type":"assumption_reveal","text":"I'll navigate around the left side where there's more clearance","confidence":"high","actions":[{"action":"turn_left","turn_degrees":30},{"action":"forward","distance":1.5},{"action":"turn_right","turn_degrees":30},{"action":"forward","distance":1.0}]}
+- "go around it" + image shows RIGHT side clear, left blocked, no edge hazards → {"friction_type":"assumption_reveal","text":"I'll navigate around the right side where there's more clearance","confidence":"high","actions":[{"action":"turn_right","turn_degrees":25},{"action":"forward","distance":1.3},{"action":"turn_left","turn_degrees":50},{"action":"forward","distance":0.9}]}
+- "go around the box" + both sides clear, RIGHT has more space, no edges → {"friction_type":"none","text":"Navigating around the right side","confidence":"high","actions":[{"action":"turn_right","turn_degrees":30},{"action":"forward","distance":1.4},{"action":"turn_left","turn_degrees":55},{"action":"forward","distance":0.8}]}
+- "go around the obstacle" + both sides clear, LEFT has more space, no edges → {"friction_type":"none","text":"Navigating around the left side","confidence":"high","actions":[{"action":"turn_left","turn_degrees":28},{"action":"forward","distance":1.3},{"action":"turn_right","turn_degrees":52},{"action":"forward","distance":0.9}]}
+- "go around it to the left" + user explicitly specifies left, no edge hazards → {"friction_type":"none","text":"Going around the left side","confidence":"high","actions":[{"action":"turn_left","turn_degrees":25},{"action":"forward","distance":1.2},{"action":"turn_right","turn_degrees":50},{"action":"forward","distance":0.8}]}
+
+## Clear Path Navigation:
+- "go to plant" + one plant, clear path, no edge hazards → {"friction_type":"none","action":"spatial_navigate","target_object":"plant","distance":2.0,"turn_degrees":5,"text":"","clarification_needed":null,"confidence":"high"}
 
 Return ONLY valid JSON, nothing else."""
 
@@ -134,7 +194,7 @@ Return ONLY valid JSON, nothing else."""
             response = self.openai_client.chat.completions.create(
                 model=self.vision_model,
                 messages=messages,
-                max_completion_tokens=2000
+                max_completion_tokens=8192
                 # Note: GPT-5 nano doesn't support temperature parameter, uses default of 1
             )
             
