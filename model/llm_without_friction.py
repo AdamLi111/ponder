@@ -1,6 +1,7 @@
 """
 LLM layer using GPT-5 nano WITHOUT positive friction for control testing
 Makes best-guess assumptions rather than asking clarifying questions
+Includes find_object support
 """
 from openai import OpenAI
 import json
@@ -44,7 +45,12 @@ class LLMLayerNoFriction:
             # Build the system prompt WITHOUT friction mechanisms
             system_prompt = """You are Misty, a robot with vision that parses commands into executable actions.
 
-# Actions: forward, backward, left, right, turn_left, turn_right, stop, describe_vision, spatial_navigate, speak, unknown
+# Actions: forward, backward, left, right, turn_left, turn_right, stop, describe_vision, find_object, spatial_navigate, speak, unknown
+
+# Find Object Action:
+When user says "find [object]" or "look for [object]" or "where is my [object]":
+- Return action: "find_object" with target_object set to the object name
+- This triggers a 360-degree scan with 4 images
 
 # Spatial Commands with Vision:
 If user says "go to X" AND you see an image:
@@ -66,6 +72,8 @@ If user says "go to X" AND you see an image:
 }
 
 Examples:
+- "find my bag" → {"action":"find_object","target_object":"bag","distance":0,"text":"Looking for your bag","turn_degrees":0,"confidence":"high"}
+- "where is the laptop" → {"action":"find_object","target_object":"laptop","distance":0,"text":"Searching for the laptop","turn_degrees":0,"confidence":"high"}
 - "move forward 2m" → {"action":"forward","distance":2,"text":"Moving forward","target_object":null,"turn_degrees":0,"confidence":"high"}
 - "go to plant" + image shows 1 plant ahead → {"action":"spatial_navigate","target_object":"plant","distance":2.0,"turn_degrees":0,"text":"Going to the plant","confidence":"high"}
 - "go to cup" + image shows 2 cups → {"action":"spatial_navigate","target_object":"cup","distance":1.5,"turn_degrees":-10,"text":"Going to the cup","confidence":"medium"}
@@ -206,6 +214,117 @@ Return ONLY valid JSON, nothing else."""
                 'confidence': 'low',
                 'friction_type': 'none',
                 'clarification_needed': None
+            }
+    
+    def find_object_in_images(self, target_object, images):
+        """
+        Analyze multiple images from 360-degree scan to find an object
+        Same implementation as friction version since this is analysis, not friction
+        
+        Args:
+            target_object: Name of the object to find
+            images: List of dicts with 'direction' and 'data' (base64) keys
+        
+        Returns:
+            dict with found, response, count, locations
+        """
+        print(f"Analyzing {len(images)} images to find: {target_object}")
+        
+        try:
+            prompt = f"""You are analyzing 4 images from a robot's 360-degree scan to find a {target_object}.
+
+The images are from these directions:
+1. Front view (starting position)
+2. Left view (90 degrees left from start)
+3. Back view (180 degrees from start)
+4. Right view (270 degrees left / 90 degrees right from start)
+
+Your task:
+1. Look for "{target_object}" in ALL 4 images
+2. Count how many instances you find
+3. For each instance, note which direction and describe its location
+
+Respond in JSON format:
+{{
+  "found": true/false,
+  "count": number_of_instances,
+  "instances": [
+    {{
+      "direction": "front/left/back/right",
+      "description": "brief location description"
+    }}
+  ]
+}}
+
+Return ONLY valid JSON, nothing else."""
+
+            user_content = [{"type": "text", "text": prompt}]
+            
+            for img in images:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{img['data']}"
+                    }
+                })
+            
+            response = self.openai_client.chat.completions.create(
+                model=self.vision_model,
+                messages=[{"role": "user", "content": user_content}],
+                max_completion_tokens=2000
+            )
+            
+            llm_output = response.choices[0].message.content.strip()
+            
+            json_start = llm_output.find('{')
+            json_end = llm_output.rfind('}') + 1
+            
+            if json_start != -1 and json_end > json_start:
+                json_str = llm_output[json_start:json_end]
+                analysis = json.loads(json_str)
+                
+                found = analysis.get('found', False)
+                count = analysis.get('count', 0)
+                instances = analysis.get('instances', [])
+                
+                if not found or count == 0:
+                    response_text = f"I scanned the entire room but couldn't find your {target_object}."
+                elif count == 1:
+                    instance = instances[0]
+                    direction = instance.get('direction', 'unknown')
+                    description = instance.get('description', 'nearby')
+                    response_text = f"I found your {target_object}. It's {description}, to my {direction}."
+                else:
+                    response_text = f"I found {count} {target_object}s. "
+                    for i, instance in enumerate(instances, 1):
+                        direction = instance.get('direction', 'unknown')
+                        description = instance.get('description', 'there')
+                        response_text += f"Number {i} is {description} to my {direction}. "
+                    response_text += f"Which one is yours?"
+                
+                return {
+                    'found': found,
+                    'response': response_text,
+                    'count': count,
+                    'locations': instances
+                }
+            else:
+                return {
+                    'found': False,
+                    'response': f"Sorry, I had trouble analyzing the images.",
+                    'count': 0,
+                    'locations': []
+                }
+                
+        except Exception as e:
+            print(f"Error in find_object_in_images: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'found': False,
+                'response': f"Sorry, I encountered an error while searching.",
+                'count': 0,
+                'locations': []
             }
     
     def describe_image(self, image_data_base64):

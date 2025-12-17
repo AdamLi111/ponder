@@ -1,11 +1,14 @@
 """
 Action executor module
 Defines and executes all robot actions with positive friction support and spatial navigation
-Now simplified since vision analysis happens before action execution
+Now includes 360-degree object finding capability
 """
 import time
 import math
+import requests
+import threading
 
+ROBOT_IP = '172.20.10.2'
 
 class ActionExecutor:
     def __init__(self, robot, vision_handler=None, llm_layer=None):
@@ -30,12 +33,13 @@ class ActionExecutor:
 
             # Visual parsing
             'describe_vision': self.describe_vision,
+            
+            # Object finding
+            'find_object': self.find_object,
 
             # Spatial navigation
             'spatial_navigate': self.spatial_navigate,
             'unknown': self.unknown_action
-
-            # 
         }
     
     def execute(self, intent):
@@ -61,7 +65,7 @@ class ActionExecutor:
                 
                 # Call the appropriate function based on action type
                 if action == 'turn_left' or action == 'turn_right':
-                    execution_time = action_func(degrees=turn_degrees, speak=True)  # Don't speak each step
+                    execution_time = action_func(degrees=turn_degrees, speak=True)
                 else:
                     execution_time = action_func(distance=distance, turn_degrees=turn_degrees)
                 
@@ -106,10 +110,94 @@ class ActionExecutor:
                 distance=distance,
                 turn_degrees=turn_degrees
             )
+        elif action == 'find_object':
+            action_func(target_object=target_object)
         elif action == 'turn_left' or action == 'turn_right':
             action_func(degrees=turn_degrees, speak=True)
         else:
             action_func(distance=distance, text=text)
+    
+    def find_object(self, target_object=None, **kwargs):
+        """
+        Find an object by capturing 4 images in a 360-degree scan
+        Sends all images to VLM for analysis and location description
+        """
+        if not target_object:
+            print("No target object specified for find action")
+            self.robot.speak("I need to know what object to look for")
+            return
+        
+        if not self.vision_handler or not self.llm_layer:
+            print("Vision or LLM handler not available")
+            self.robot.speak("Sorry, my vision system is not available")
+            return
+        
+        print(f"Starting 360-degree scan to find: {target_object}")
+        self.robot.speak(f"Let me look around for your {target_object}")
+        
+        # Capture 4 images at 90-degree intervals
+        images = []
+        directions = ["front", "left", "back", "right"]
+        
+        for i, direction in enumerate(directions):
+            print(f"Capturing image {i+1}/4 - {direction} view")
+            
+            # Capture and encode image
+            image_data = self.vision_handler.capture_and_encode()
+            
+            if image_data:
+                images.append({
+                    'direction': direction,
+                    'data': image_data
+                })
+                print(f"✓ Captured {direction} view")
+            else:
+                print(f"✗ Failed to capture {direction} view")
+            
+            # Turn 90 degrees left for next view (except on last iteration)
+            if i < 3:
+                print(f"Turning left 90 degrees for next view...")
+                self.turn_left(degrees=90, speak=False)
+                time.sleep(2)  # Wait for turn to complete and camera to stabilize
+        
+        # Turn back to face forward (270 degrees left = 90 degrees right)
+        print("Returning to original position...")
+        self.turn_left(degrees=90, speak=False)
+        time.sleep(2)
+        
+        # Check if we got at least one image
+        if not images:
+            print("Failed to capture any images")
+            self.robot.speak("Sorry, I couldn't capture any images")
+            return
+        
+        print(f"Captured {len(images)} images, analyzing with VLM...")
+        self.robot.speak("I've completed the scan, let me analyze what I found")
+        
+        # Call VLM to analyze all images
+        result = self.llm_layer.find_object_in_images(target_object, images)
+        
+        if result:
+            response_text = result.get('response', '')
+            found = result.get('found', False)
+            
+            if found:
+                print(f"Object found! Response: {response_text}")
+            else:
+                print(f"Object not found. Response: {response_text}")
+            
+            # Speak the result
+            self.robot.speak(response_text)
+        else:
+            print("VLM analysis failed")
+            self.robot.speak(f"Sorry, I couldn't analyze the images to find your {target_object}")
+
+    def run_action(self, robot_ip, action_name):
+        response = requests.post(
+            f"http://{robot_ip}/api/actions/start",
+            json={"name": action_name}
+        )
+        return response.json()
     
     def spatial_navigate(self, target_object=None, distance=0, turn_degrees=0, **kwargs):
         """
@@ -157,6 +245,16 @@ class ActionExecutor:
         """Move forward by specified distance"""
         print(f"Moving forward {distance} meter(s)")
         self.robot.speak(f"Moving forward {distance} meters")
+        
+        # Start the action in a background thread
+        action_thread = threading.Thread(
+            target=self.run_action, 
+            args=(ROBOT_IP, "Walk-fast")
+        )
+        action_thread.daemon = True  # Thread will close when main program exits
+        action_thread.start()
+        
+        # Drive immediately without waiting for action to complete
         drive_time = self._calculate_drive_time(distance)
         self.robot.drive_time(50, 0, drive_time)
         return drive_time
@@ -292,5 +390,5 @@ class ActionExecutor:
         Using sqrt relationship: time = k * sqrt(degrees)
         Where k = 4300 / sqrt(90) ≈ 453.15
         """
-        k = 4300 / math.sqrt(90)  # ≈ 453.15
+        k = 4500 / math.sqrt(90)  # ≈ 453.15
         return int(k * math.sqrt(degrees))

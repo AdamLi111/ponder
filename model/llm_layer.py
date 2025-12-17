@@ -1,6 +1,6 @@
 """
 LLM layer using GPT-5 nano as unified VLM for both intent parsing and vision
-Combines text and vision analysis in a single multimodal call
+Includes 360-degree object finding capability
 """
 from openai import OpenAI
 import json
@@ -45,7 +45,13 @@ class LLMLayer:
             # Build the unified system prompt (more concise)
             system_prompt = """You are Misty, a robot with vision that parses commands and decides when to ask clarifying questions.
 
-# Actions: forward, backward, left, right, turn_left, turn_right, stop, describe_vision, spatial_navigate, speak, clarify, unknown
+# Actions: forward, backward, left, right, turn_left, turn_right, stop, describe_vision, find_object, spatial_navigate, speak, clarify, unknown
+
+# Find Object Action:
+When user says "find [object]" or "look for [object]" or "where is my [object]":
+- Return action: "find_object" with target_object set to the object name
+- This triggers a 360-degree scan with 4 images
+- No image needed in this parsing step
 
 # Friction Types (when to slow down and ask):
 - **probing**: Ask questions ONLY for truly ambiguous situations (multiple identical target objects, unclear user intent, CRITICAL SAFETY CONCERNS)
@@ -141,6 +147,11 @@ For multi-action sequences:
 ## Clear Path Navigation:
 - "go to plant" + one plant, clear path, no edge hazards → {"friction_type":"none","action":"spatial_navigate","target_object":"plant","distance":2.0,"turn_degrees":5,"text":"","clarification_needed":null,"confidence":"high"}
 
+## Find Object Commands:
+- "find my bag" → {"friction_type":"none","action":"find_object","target_object":"bag","distance":0,"text":"","turn_degrees":0,"confidence":"high"}
+- "look for the keys" → {"friction_type":"none","action":"find_object","target_object":"keys","distance":0,"text":"","turn_degrees":0,"confidence":"high"}
+- "where is my laptop" → {"friction_type":"none","action":"find_object","target_object":"laptop","distance":0,"text":"","turn_degrees":0,"confidence":"high"}
+
 Return ONLY valid JSON, nothing else."""
 
             # Build message content
@@ -195,7 +206,6 @@ Return ONLY valid JSON, nothing else."""
                 model=self.vision_model,
                 messages=messages,
                 max_completion_tokens=8192
-                # Note: GPT-5 nano doesn't support temperature parameter, uses default of 1
             )
             
             print(f"Response received. Finish reason: {response.choices[0].finish_reason}")
@@ -278,6 +288,147 @@ Return ONLY valid JSON, nothing else."""
                 'clarification_needed': None,
                 'confidence': 'low'
             }
+    
+    def find_object_in_images(self, target_object, images):
+        """
+        Analyze multiple images from 360-degree scan to find an object
+        
+        Args:
+            target_object: Name of the object to find
+            images: List of dicts with 'direction' and 'data' (base64) keys
+                   e.g., [{'direction': 'front', 'data': 'base64...'}, ...]
+        
+        Returns:
+            dict with:
+                - found: boolean indicating if object was found
+                - response: text response to speak to user
+                - count: number of instances found
+                - locations: list of location descriptions
+        """
+        print(f"Analyzing {len(images)} images to find: {target_object}")
+        
+        try:
+            # Build the prompt for finding the object
+            prompt = f"""You are analyzing 4 images from a robot's 360-degree scan to find a {target_object}.
+
+The images are from these directions:
+1. Front view (starting position)
+2. Left view (90 degrees left from start)
+3. Back view (180 degrees from start)
+4. Right view (270 degrees left / 90 degrees right from start)
+
+Your task:
+1. Look for "{target_object}" in ALL 4 images
+2. Count how many instances you find
+3. For each instance, note which direction and describe its location
+
+Respond in JSON format:
+{{
+  "found": true/false,
+  "count": number_of_instances,
+  "instances": [
+    {{
+      "direction": "front/left/back/right",
+      "description": "brief location description (e.g., 'on the floor near the door', 'on the desk', 'hanging on the wall')"
+    }}
+  ]
+}}
+
+If NOT found: {{"found": false, "count": 0, "instances": []}}
+If ONE found: Include direction and location
+If MULTIPLE found: List all with directions and brief appearance differences
+
+Return ONLY valid JSON, nothing else."""
+
+            # Build messages with all 4 images
+            user_content = [{"type": "text", "text": prompt}]
+            
+            for img in images:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{img['data']}"
+                    }
+                })
+            
+            print(f"Sending {len(images)} images to GPT-5 nano for analysis...")
+            
+            response = self.openai_client.chat.completions.create(
+                model=self.vision_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": user_content
+                    }
+                ],
+                max_completion_tokens=2000
+            )
+            
+            llm_output = response.choices[0].message.content.strip()
+            print(f"VLM analysis output: {llm_output}")
+            
+            # Parse JSON response
+            json_start = llm_output.find('{')
+            json_end = llm_output.rfind('}') + 1
+            
+            if json_start != -1 and json_end > json_start:
+                json_str = llm_output[json_start:json_end]
+                analysis = json.loads(json_str)
+                
+                found = analysis.get('found', False)
+                count = analysis.get('count', 0)
+                instances = analysis.get('instances', [])
+                
+                # Generate appropriate response based on findings
+                if not found or count == 0:
+                    response_text = f"I scanned the entire room but couldn't find your {target_object}. It's not visible from my current location."
+                    
+                elif count == 1:
+                    instance = instances[0]
+                    direction = instance.get('direction', 'unknown')
+                    description = instance.get('description', 'nearby')
+                    response_text = f"I found your {target_object}. It's {description}, which is to my {direction}."
+                    
+                else:  # Multiple instances
+                    response_text = f"I found {count} {target_object}s in the room. "
+                    for i, instance in enumerate(instances, 1):
+                        direction = instance.get('direction', 'unknown')
+                        description = instance.get('description', 'there')
+                        response_text += f"The {i}{self._ordinal_suffix(i)} one is {description} to my {direction}. "
+                    response_text += f"Which {target_object} is yours?"
+                
+                return {
+                    'found': found,
+                    'response': response_text,
+                    'count': count,
+                    'locations': instances
+                }
+            
+            else:
+                print("Could not parse JSON from VLM response")
+                return {
+                    'found': False,
+                    'response': f"Sorry, I had trouble analyzing the images to find your {target_object}.",
+                    'count': 0,
+                    'locations': []
+                }
+                
+        except Exception as e:
+            print(f"Error in find_object_in_images: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'found': False,
+                'response': f"Sorry, I encountered an error while searching for your {target_object}.",
+                'count': 0,
+                'locations': []
+            }
+    
+    def _ordinal_suffix(self, n):
+        """Return ordinal suffix for a number (st, nd, rd, th)"""
+        if 10 <= n % 100 <= 20:
+            return 'th'
+        return {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
     
     def describe_image(self, image_data_base64):
         """Get general description of an image using GPT-5 nano"""

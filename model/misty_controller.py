@@ -10,6 +10,7 @@ from model.llm_without_friction import LLMLayerNoFriction
 from model.vision_handler import VisionHandler
 from model.action_executor import ActionExecutor
 import time
+import requests
 
 
 class MistyController:
@@ -38,7 +39,7 @@ class MistyController:
         # Initialize modules - PASS robot instance to speech_handler
         self.speech_handler = SpeechHandler(
             ip_address, 
-            robot=self.robot,  # ← CRITICAL: Pass robot instance
+            robot=self.robot,
             use_laptop_mic=use_laptop_mic
         )
         
@@ -80,11 +81,26 @@ class MistyController:
         spatial_keywords = [
             'go to', 'go over to', 'move to', 'move towards', 
             'navigate to', 'walk to', 'approach', 'head to',
-            'find the', 'get to', 'move', 'turn'
+            'get to', 'move', 'turn'
         ]
         
         text_lower = speech_text.lower()
         return any(keyword in text_lower for keyword in spatial_keywords)
+    
+    def _seems_like_find_command(self, speech_text):
+        """
+        Check if the text seems like a find/search command
+        Find commands handle their own image capture (360-degree scan)
+        """
+        find_keywords = [
+            'find', 'find my', 'find the',
+            'look for', 'search for',
+            'where is', 'where is my', 'where is the',
+            'locate', 'locate my', 'locate the'
+        ]
+        
+        text_lower = speech_text.lower()
+        return any(keyword in text_lower for keyword in find_keywords)
     
     def _process_command(self, speech_text):
         """
@@ -96,8 +112,21 @@ class MistyController:
         print(f"Heard: {speech_text}")
         self.robot.speak("OK, let me think about that")
         
+        # Check if this is a find command - these handle their own image capture
+        if self._seems_like_find_command(speech_text):
+            print("Find command detected - will do 360-degree scan later")
+            try:
+                intent = self.llm_layer.parse_intent_with_vision(speech_text, image_data_base64=None)
+            except Exception as llm_error:
+                print(f"LLM error: {llm_error}")
+                import traceback
+                traceback.print_exc()
+                print("[DEBUG] About to speak: Sorry, I had trouble understanding that")
+                self.robot.speak("Sorry, I had trouble understanding that")
+                return
+        
         # Check if this seems like a spatial command using simple keyword matching
-        if self._seems_like_spatial_command(speech_text):
+        elif self._seems_like_spatial_command(speech_text):
             print("Spatial command detected (keyword match) - capturing image for vision analysis")
             
             # Capture image FIRST
@@ -126,7 +155,7 @@ class MistyController:
                     self.robot.speak("Sorry, I had trouble understanding that")
                     return
         else:
-            # Not a spatial command - parse without vision
+            # Not a spatial or find command - parse without vision
             try:
                 intent = self.llm_layer.parse_intent_with_vision(speech_text, image_data_base64=None)
             except Exception as llm_error:
@@ -143,6 +172,14 @@ class MistyController:
         else:
             print("[DEBUG] About to speak: I'm not sure what you want me to do")
             self.robot.speak("I'm not sure what you want me to do")
+
+    def perform_action(self, action_name):
+        """Execute a pre-programmed Misty action like Walk-fast, Hi, Party, etc."""
+        response = requests.post(
+            f"http://{self.ip_address}/api/actions/start",
+            json={"name": action_name}
+        )
+        return response.json()
     
     def _voice_record_callback(self, data):
         """
@@ -237,6 +274,8 @@ class MistyController:
             print("  - go to the plant")
             print("  - move towards that chair")
             print("  - go forward 1 meter and then turn right")
+            print("  - find my bag")
+            print("  - where is my laptop")
             print()
             
             while True:
@@ -271,7 +310,6 @@ class MistyController:
                 print("Press Ctrl+C to stop")
                 
                 # Start listening for wake phrase from Misty
-                # This will now use the proper start_listening() implementation
                 self.speech_handler.start_listening(self._voice_record_callback)
                 
                 # Keep running

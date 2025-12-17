@@ -15,7 +15,7 @@ IP_ADDRESS = "172.20.10.2"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # For GPT-5 nano (text + vision)
 
 # TEST MODE: Set to True to type commands instead of using voice
-TEST_MODE = False 
+TEST_MODE = True 
 
 # LAPTOP MICROPHONE MODE: Set to True to use laptop mic instead of Misty's mic
 # Only applies when TEST_MODE = False
