@@ -150,6 +150,10 @@ Return ONLY valid JSON, nothing else."""
             print(f"GPT-5 nano raw output: '{llm_output}'")
             print(f"Output length: {len(llm_output)} characters")
             
+            # Log VLM output
+            if self.logger:
+                self.logger.log_vlm_output(llm_output)
+            
             # Add assistant's response to history
             self.conversation_history.append({
                 "role": "assistant",

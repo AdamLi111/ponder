@@ -2,6 +2,7 @@
 MistyController module
 Main controller coordinating all robot modules and interaction loops
 Uses GPT-5 nano as unified VLM for both text and vision
+Includes conversation logging
 """
 from PythonSDKmain.mistyPy.Robot import Robot
 from model.speech_handler import SpeechHandler
@@ -9,8 +10,8 @@ from model.llm_layer import LLMLayer
 from model.llm_without_friction import LLMLayerNoFriction
 from model.vision_handler import VisionHandler
 from model.action_executor import ActionExecutor
+from model.conversation_logger import ConversationLogger
 import time
-import requests
 
 
 class MistyController:
@@ -19,7 +20,7 @@ class MistyController:
     and handles both voice-based and test mode interactions
     """
     
-    def __init__(self, ip_address, openai_api_key, use_laptop_mic=False, friction_enabled=True):
+    def __init__(self, ip_address, openai_api_key, use_laptop_mic=False, friction_enabled=True, enable_logging=True, session_name=None):
         """
         Initialize the Misty controller with all necessary modules
         
@@ -28,10 +29,17 @@ class MistyController:
             openai_api_key: API key for OpenAI (GPT-5 nano)
             use_laptop_mic: If True, use laptop microphone instead of Misty's mic
             friction_enabled: If True, use LLM with positive friction; if False, use no-friction version
+            enable_logging: If True, log all conversations to file
+            session_name: Optional custom name for log file
         """
         self.ip_address = ip_address
         self.use_laptop_mic = use_laptop_mic
         self.friction_enabled = friction_enabled
+        
+        # Initialize conversation logger
+        self.logger = None
+        if enable_logging:
+            self.logger = ConversationLogger(session_name=session_name)
         
         # Initialize robot FIRST
         self.robot = Robot(ip_address)
@@ -43,19 +51,20 @@ class MistyController:
             use_laptop_mic=use_laptop_mic
         )
         
-        # Choose LLM layer based on friction setting
+        # Choose LLM layer based on friction setting and pass logger
         if friction_enabled:
-            self.llm_layer = LLMLayer(openai_api_key)
+            self.llm_layer = LLMLayer(openai_api_key, logger=self.logger)
             print("Using LLM with positive friction enabled")
         else:
-            self.llm_layer = LLMLayerNoFriction(openai_api_key)
+            self.llm_layer = LLMLayerNoFriction(openai_api_key, logger=self.logger)
             print("Using LLM without friction (control mode)")
         
         self.vision_handler = VisionHandler(self.robot, ip_address)
         self.action_executor = ActionExecutor(
             self.robot, 
             self.vision_handler, 
-            self.llm_layer
+            self.llm_layer,
+            logger=self.logger
         )
         
         # State management for voice processing
@@ -64,7 +73,9 @@ class MistyController:
         
         mic_mode = "Laptop Microphone" if use_laptop_mic else "Misty's Microphone"
         friction_mode = "with friction" if friction_enabled else "without friction (control)"
+        logging_status = "enabled" if enable_logging else "disabled"
         print(f"Misty controller initialized with GPT-5 nano VLM ({friction_mode}) + {mic_mode}")
+        print(f"Conversation logging: {logging_status}")
     
     def setup_robot(self):
         """Initial robot setup - configure default state"""
@@ -110,7 +121,14 @@ class MistyController:
             speech_text: The transcribed or typed command text
         """
         print(f"Heard: {speech_text}")
+        
+        # Start logging turn
+        if self.logger:
+            self.logger.start_turn(speech_text)
+        
         self.robot.speak("OK, let me think about that")
+        if self.logger:
+            self.logger.log_misty_speech("OK, let me think about that")
         
         # Check if this is a find command - these handle their own image capture
         if self._seems_like_find_command(speech_text):
@@ -123,6 +141,9 @@ class MistyController:
                 traceback.print_exc()
                 print("[DEBUG] About to speak: Sorry, I had trouble understanding that")
                 self.robot.speak("Sorry, I had trouble understanding that")
+                if self.logger:
+                    self.logger.log_misty_speech("Sorry, I had trouble understanding that")
+                    self.logger.end_turn()
                 return
         
         # Check if this seems like a spatial command using simple keyword matching
@@ -142,6 +163,9 @@ class MistyController:
                     traceback.print_exc()
                     print("[DEBUG] About to speak: Sorry, I had trouble understanding that")
                     self.robot.speak("Sorry, I had trouble understanding that")
+                    if self.logger:
+                        self.logger.log_misty_speech("Sorry, I had trouble understanding that")
+                        self.logger.end_turn()
                     return
             else:
                 print("Failed to capture image, proceeding without vision")
@@ -153,6 +177,9 @@ class MistyController:
                     traceback.print_exc()
                     print("[DEBUG] About to speak: Sorry, I had trouble understanding that")
                     self.robot.speak("Sorry, I had trouble understanding that")
+                    if self.logger:
+                        self.logger.log_misty_speech("Sorry, I had trouble understanding that")
+                        self.logger.end_turn()
                     return
         else:
             # Not a spatial or find command - parse without vision
@@ -164,6 +191,9 @@ class MistyController:
                 traceback.print_exc()
                 print("[DEBUG] About to speak: Sorry, I had trouble understanding that")
                 self.robot.speak("Sorry, I had trouble understanding that")
+                if self.logger:
+                    self.logger.log_misty_speech("Sorry, I had trouble understanding that")
+                    self.logger.end_turn()
                 return
         
         # Execute the action
@@ -172,14 +202,12 @@ class MistyController:
         else:
             print("[DEBUG] About to speak: I'm not sure what you want me to do")
             self.robot.speak("I'm not sure what you want me to do")
-
-    def perform_action(self, action_name):
-        """Execute a pre-programmed Misty action like Walk-fast, Hi, Party, etc."""
-        response = requests.post(
-            f"http://{self.ip_address}/api/actions/start",
-            json={"name": action_name}
-        )
-        return response.json()
+            if self.logger:
+                self.logger.log_misty_speech("I'm not sure what you want me to do")
+        
+        # End logging turn
+        if self.logger:
+            self.logger.end_turn()
     
     def _voice_record_callback(self, data):
         """
@@ -351,4 +379,6 @@ class MistyController:
         print("Cleaning up...")
         if hasattr(self, 'speech_handler'):
             self.speech_handler.stop_listening()
+        if self.logger:
+            self.logger.finalize()
         print("Cleanup complete")

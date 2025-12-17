@@ -5,16 +5,14 @@ Now includes 360-degree object finding capability
 """
 import time
 import math
-import requests
-import threading
 
-ROBOT_IP = '172.20.10.2'
 
 class ActionExecutor:
-    def __init__(self, robot, vision_handler=None, llm_layer=None):
+    def __init__(self, robot, vision_handler=None, llm_layer=None, logger=None):
         self.robot = robot
         self.vision_handler = vision_handler
         self.llm_layer = llm_layer
+        self.logger = logger
         
         # Action mapping
         self.actions = {
@@ -41,6 +39,12 @@ class ActionExecutor:
             'spatial_navigate': self.spatial_navigate,
             'unknown': self.unknown_action
         }
+
+    def _speak(self, text):
+        """Helper method to speak and log"""
+        self.robot.speak(text)
+        if self.logger:
+            self.logger.log_misty_speech(text)
     
     def execute(self, intent):
         """Execute an action based on parsed intent with friction handling"""
@@ -52,7 +56,7 @@ class ActionExecutor:
             # Announce the plan if there's text
             if text:
                 print(f"Announcing plan: {text}")
-                self.robot.speak(text)
+                self._speak(text)
                 time.sleep(0.5)
             
             print(f"Executing multi-action sequence")
@@ -86,7 +90,7 @@ class ActionExecutor:
         # Handle friction types
         if friction_type != 'none' and text:
             print(f"Applying {friction_type} friction: {text}")
-            self.robot.speak(text)
+            self._speak(text)
             
             # Probing stops execution to wait for user response
             if friction_type == 'probing' or action == 'clarify':
@@ -124,16 +128,16 @@ class ActionExecutor:
         """
         if not target_object:
             print("No target object specified for find action")
-            self.robot.speak("I need to know what object to look for")
+            self._speak("I need to know what object to look for")
             return
         
         if not self.vision_handler or not self.llm_layer:
             print("Vision or LLM handler not available")
-            self.robot.speak("Sorry, my vision system is not available")
+            self._speak("Sorry, my vision system is not available")
             return
         
         print(f"Starting 360-degree scan to find: {target_object}")
-        self.robot.speak(f"Let me look around for your {target_object}")
+        self._speak(f"Let me look around for your {target_object}")
         
         # Capture 4 images at 90-degree intervals
         images = []
@@ -162,17 +166,17 @@ class ActionExecutor:
         
         # Turn back to face forward (270 degrees left = 90 degrees right)
         print("Returning to original position...")
-        self.turn_left(degrees=90, speak=False)
+        self.turn_right(degrees=90, speak=False)
         time.sleep(2)
         
         # Check if we got at least one image
         if not images:
             print("Failed to capture any images")
-            self.robot.speak("Sorry, I couldn't capture any images")
+            self._speak("Sorry, I couldn't capture any images")
             return
         
         print(f"Captured {len(images)} images, analyzing with VLM...")
-        self.robot.speak("I've completed the scan, let me analyze what I found")
+        self._speak("I've completed the scan, let me analyze what I found")
         
         # Call VLM to analyze all images
         result = self.llm_layer.find_object_in_images(target_object, images)
@@ -187,17 +191,10 @@ class ActionExecutor:
                 print(f"Object not found. Response: {response_text}")
             
             # Speak the result
-            self.robot.speak(response_text)
+            self._speak(response_text)
         else:
             print("VLM analysis failed")
-            self.robot.speak(f"Sorry, I couldn't analyze the images to find your {target_object}")
-
-    def run_action(self, robot_ip, action_name):
-        response = requests.post(
-            f"http://{robot_ip}/api/actions/start",
-            json={"name": action_name}
-        )
-        return response.json()
+            self._speak(f"Sorry, I couldn't analyze the images to find your {target_object}")
     
     def spatial_navigate(self, target_object=None, distance=0, turn_degrees=0, **kwargs):
         """
@@ -206,7 +203,7 @@ class ActionExecutor:
         """
         if not target_object:
             print("No target object specified")
-            self.robot.speak("I need to know what object to navigate towards")
+            self._speak("I need to know what object to navigate towards")
             return
         
         print(f"Executing spatial navigation towards: {target_object}")
@@ -214,11 +211,11 @@ class ActionExecutor:
         
         # Announce the plan
         if turn_degrees == 0:
-            self.robot.speak(f"Moving towards the {target_object} straight ahead")
+            self._speak(f"Moving towards the {target_object} straight ahead")
         elif turn_degrees < 0:
-            self.robot.speak(f"Turning left and moving towards the {target_object}")
+            self._speak(f"Turning left and moving towards the {target_object}")
         else:
-            self.robot.speak(f"Turning right and moving towards the {target_object}")
+            self._speak(f"Turning right and moving towards the {target_object}")
         
         time.sleep(1)
         
@@ -239,22 +236,12 @@ class ActionExecutor:
             
             time.sleep(drive_time / 1000 + 0.5)
             
-            self.robot.speak(f"I've reached the {target_object}")
+            self._speak(f"I've reached the {target_object}")
     
     def move_forward(self, distance=1.0, **kwargs):
         """Move forward by specified distance"""
         print(f"Moving forward {distance} meter(s)")
-        self.robot.speak(f"Moving forward {distance} meters")
-        
-        # Start the action in a background thread
-        action_thread = threading.Thread(
-            target=self.run_action, 
-            args=(ROBOT_IP, "Walk-fast")
-        )
-        action_thread.daemon = True  # Thread will close when main program exits
-        action_thread.start()
-        
-        # Drive immediately without waiting for action to complete
+        self._speak(f"Moving forward {distance} meters")
         drive_time = self._calculate_drive_time(distance)
         self.robot.drive_time(50, 0, drive_time)
         return drive_time
@@ -262,7 +249,7 @@ class ActionExecutor:
     def move_backward(self, distance=1.0, **kwargs):
         """Move backward by specified distance"""
         print(f"Moving backward {distance} meter(s)")
-        self.robot.speak(f"Moving backward {distance} meters")
+        self._speak(f"Moving backward {distance} meters")
         drive_time = self._calculate_drive_time(distance)
         self.robot.drive_time(-50, 0, drive_time)
         return drive_time
@@ -270,7 +257,7 @@ class ActionExecutor:
     def move_left(self, distance=1.0, **kwargs):
         """Strafe left by specified distance"""
         print(f"Going left {distance} meter(s)")
-        self.robot.speak(f"Going left {distance} meters")
+        self._speak(f"Going left {distance} meters")
         # Turn left, move forward, turn back right
         self.robot.drive_time(0, -100, 2150)  # ~45 degrees
         time.sleep(2.5)
@@ -283,7 +270,7 @@ class ActionExecutor:
     def move_right(self, distance=1.0, **kwargs):
         """Strafe right by specified distance"""
         print(f"Going right {distance} meter(s)")
-        self.robot.speak(f"Going right {distance} meters")
+        self._speak(f"Going right {distance} meters")
         # Turn right, move forward, turn back left
         self.robot.drive_time(0, 100, 2150)  # ~45 degrees
         time.sleep(2.5)
@@ -299,7 +286,7 @@ class ActionExecutor:
         """Turn left by specified degrees (default 90)"""
         print(f"Turning left {degrees} degrees")
         if speak:
-            self.robot.speak(f"Turning left {degrees} degrees")
+            self._speak(f"Turning left {degrees} degrees")
         
         turn_time = self._calculate_turn_time(degrees)
         self.robot.drive_time(0, 100, turn_time)
@@ -311,7 +298,7 @@ class ActionExecutor:
         """Turn right by specified degrees (default 90)"""
         print(f"Turning right {degrees} degrees")
         if speak:
-            self.robot.speak(f"Turning right {degrees} degrees")
+            self._speak(f"Turning right {degrees} degrees")
         
         turn_time = self._calculate_turn_time(degrees)
         self.robot.drive_time(0, -100, turn_time)
@@ -320,29 +307,29 @@ class ActionExecutor:
     def stop(self, **kwargs):
         """Stop all movement"""
         print("Stopping")
-        self.robot.speak("Stopping")
+        self._speak("Stopping")
         self.robot.stop()
     
     def speak(self, text='', **kwargs):
         """Speak the provided text"""
         if text:
             print(f"Speaking: {text}")
-            self.robot.speak(text)
+            self._speak(text)
     
     def clarify(self, text='', **kwargs):
         """Request clarification from user"""
         print(f"Requesting clarification: {text}")
-        self.robot.speak(text)
+        self._speak(text)
     
     def describe_vision(self, **kwargs):
         """Capture image and describe what robot sees"""
         if not self.vision_handler or not self.llm_layer:
             print("Vision or LLM handler not available")
-            self.robot.speak("Sorry, my vision system is not available")
+            self._speak("Sorry, my vision system is not available")
             return
         
         print("Processing vision request...")
-        self.robot.speak("Let me take a look")
+        self._speak("Let me take a look")
         
         # Capture and encode image
         image_data = self.vision_handler.capture_and_encode()
@@ -353,16 +340,16 @@ class ActionExecutor:
             
             if description:
                 print(f"Vision description: {description}")
-                self.robot.speak(description)
+                self._speak(description)
             else:
-                self.robot.speak("Sorry, I couldn't analyze the image")
+                self._speak("Sorry, I couldn't analyze the image")
         else:
-            self.robot.speak("Sorry, I couldn't capture an image")
+            self._speak("Sorry, I couldn't capture an image")
     
     def unknown_action(self, **kwargs):
         """Handle unknown or unrecognized actions"""
         print("Command not recognized")
-        self.robot.speak("Sorry, I didn't understand that command")
+        self._speak("Sorry, I didn't understand that command")
     
     def _calculate_drive_time(self, distance):
         """Calculate drive time in milliseconds based on distance
@@ -390,5 +377,5 @@ class ActionExecutor:
         Using sqrt relationship: time = k * sqrt(degrees)
         Where k = 4300 / sqrt(90) ≈ 453.15
         """
-        k = 4500 / math.sqrt(90)  # ≈ 453.15
+        k = 4300 / math.sqrt(90)  # ≈ 453.15
         return int(k * math.sqrt(degrees))
