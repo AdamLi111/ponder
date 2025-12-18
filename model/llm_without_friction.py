@@ -8,11 +8,12 @@ import json
 
 
 class LLMLayerNoFriction:
-    def __init__(self, openai_api_key):
+    def __init__(self, openai_api_key, logger=None):
         # GPT-5 nano for unified text + vision processing
         self.openai_client = OpenAI(api_key=openai_api_key)
         self.vision_model = "gpt-5-nano-2025-08-07"
         self.conversation_history = []
+        self.logger = logger
         print("Unified VLM enabled with GPT-5 nano (NO FRICTION MODE)")
     
     def parse_intent_with_vision(self, user_speech, image_data_base64=None):

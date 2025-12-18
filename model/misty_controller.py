@@ -92,7 +92,7 @@ class MistyController:
         spatial_keywords = [
             'go to', 'go over to', 'move to', 'move towards', 
             'navigate to', 'walk to', 'approach', 'head to',
-            'get to', 'move', 'turn'
+            'get to', 'go near', 'move', 'turn'
         ]
         
         text_lower = speech_text.lower()

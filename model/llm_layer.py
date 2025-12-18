@@ -110,6 +110,7 @@ For single actions:
 }
 
 For multi-action sequences:
+If more clearance on the left:
 {
   "friction_type": "none/assumption_reveal",
   "text": "brief description of plan",
@@ -118,6 +119,19 @@ For multi-action sequences:
     {"action": "turn_left", "turn_degrees": 30, "distance": 0},
     {"action": "forward", "distance": 2.0},
     {"action": "turn_right", "turn_degrees": 60, "distance": 0},
+    {"action": "forward", "distance": 1.0}
+  ]
+}
+
+if more clearance on the right:
+{
+  "friction_type": "none/assumption_reveal",
+  "text": "brief description of plan",
+  "confidence": "high/medium/low",
+  "actions": [
+    {"action": "turn_right", "turn_degrees": 30, "distance": 0},
+    {"action": "forward", "distance": 2.0},
+    {"action": "turn_left", "turn_degrees": 60, "distance": 0},
     {"action": "forward", "distance": 1.0}
   ]
 }

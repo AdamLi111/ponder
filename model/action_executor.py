@@ -64,12 +64,17 @@ class ActionExecutor:
                 action = action_item.get('action', 'unknown')
                 distance = action_item.get('distance', 1.0)
                 turn_degrees = action_item.get('turn_degrees', 0)
+                target_object = action_item.get('target_object', None)
                 
                 action_func = self.actions.get(action, self.unknown_action)
                 
                 # Call the appropriate function based on action type
                 if action == 'turn_left' or action == 'turn_right':
                     execution_time = action_func(degrees=turn_degrees, speak=True)
+                elif action == 'spatial_navigate':
+                    execution_time = action_func(target_object=target_object, distance=distance, turn_degrees=turn_degrees)
+                elif action == 'find_object':
+                    execution_time = action_func(target_object=target_object)
                 else:
                     execution_time = action_func(distance=distance, turn_degrees=turn_degrees)
                 
@@ -90,8 +95,9 @@ class ActionExecutor:
         # Handle friction types
         if friction_type != 'none' and text:
             print(f"Applying {friction_type} friction: {text}")
-            self._speak(text)
-            
+
+            if action != 'speak':
+                self._speak(text)
             # Probing stops execution to wait for user response
             if friction_type == 'probing' or action == 'clarify':
                 return
@@ -166,14 +172,16 @@ class ActionExecutor:
         
         # Turn back to face forward (270 degrees left = 90 degrees right)
         print("Returning to original position...")
-        self.turn_right(degrees=90, speak=False)
+        self.turn_left(degrees=90, speak=False)
         time.sleep(2)
+
+        total_turn_time = int(self._calculate_turn_time(90) * 3 + 6)
         
         # Check if we got at least one image
         if not images:
             print("Failed to capture any images")
             self._speak("Sorry, I couldn't capture any images")
-            return
+            return 
         
         print(f"Captured {len(images)} images, analyzing with VLM...")
         self._speak("I've completed the scan, let me analyze what I found")
@@ -195,6 +203,8 @@ class ActionExecutor:
         else:
             print("VLM analysis failed")
             self._speak(f"Sorry, I couldn't analyze the images to find your {target_object}")
+
+        return total_turn_time
     
     def spatial_navigate(self, target_object=None, distance=0, turn_degrees=0, **kwargs):
         """
@@ -208,6 +218,7 @@ class ActionExecutor:
         
         print(f"Executing spatial navigation towards: {target_object}")
         print(f"Navigation plan - Turn: {turn_degrees}°, Distance: {distance}m")
+        turn_time = self._calculate_turn_time(turn_degrees)
         
         # Announce the plan
         if turn_degrees == 0:
@@ -237,6 +248,8 @@ class ActionExecutor:
             time.sleep(drive_time / 1000 + 0.5)
             
             self._speak(f"I've reached the {target_object}")
+
+        return int(turn_degrees + turn_time + 1)
     
     def move_forward(self, distance=1.0, **kwargs):
         """Move forward by specified distance"""
@@ -367,15 +380,11 @@ class ActionExecutor:
         return int(k * math.pow(distance, exponent))
     
     def _calculate_turn_time(self, degrees):
-        """Calculate turn time in milliseconds based on degrees
-        
-        The robot's turning acceleration is non-linear - it starts slower and 
-        speeds up over time. This creates a relationship closer to sqrt(x) rather
-        than linear.
-        
-        Calibration: 4300ms at angular speed 100 = 90 degrees
-        Using sqrt relationship: time = k * sqrt(degrees)
-        Where k = 4300 / sqrt(90) ≈ 453.15
-        """
-        k = 4300 / math.sqrt(90)  # ≈ 453.15
-        return int(k * math.sqrt(degrees))
+        if degrees < 30:
+            # Linear relationship for small turns
+            # Calibrate: measure actual times for 5°, 10°, 15°, 20°, 25°
+            return int(degrees * 100)  # adjust multiplier from testing
+        else:
+            # Square root for larger turns
+            k = 4500 / math.sqrt(90)
+            return int(k * math.sqrt(degrees))
