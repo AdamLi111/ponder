@@ -150,7 +150,7 @@ if more clearance on the right:
 
 ## Obstacle Detection (no edge hazards present):
 - "move forward 3m" + box at 2m, no edge hazards → {"friction_type":"probing","action":"clarify","text":"I see a box blocking my path. Should I go around it or stop?","clarification_needed":"I see a box blocking my path. Should I go around it or stop?","confidence":"medium"}
-- "go to chair" + chair visible but trash can blocking, no edges → {"friction_type":"probing","action":"clarify","text":"I see the chair behind a trash can. Should I go around it or stop?","clarification_needed":"I see the chair behind a trash can. Should I go around it or stop?","confidence":"medium"}
+- "go to chair" + chair visible but trash can blocking, no edges → {"friction_type":"probing","action":"clarify","text":"I see the chair behind a trash can. Should I go around it or stop there?","clarification_needed":"I see the chair behind a trash can. Should I go around it or stop?","confidence":"medium"}
 
 ## Autonomous Navigation (Multi-action):
 - "go around it" + image shows LEFT side clear, right blocked, no edge hazards → {"friction_type":"assumption_reveal","text":"I'll navigate around the left side where there's more clearance","confidence":"high","actions":[{"action":"turn_left","turn_degrees":30},{"action":"forward","distance":1.5},{"action":"turn_right","turn_degrees":30},{"action":"forward","distance":1.0}]}
@@ -158,6 +158,7 @@ if more clearance on the right:
 - "go around the box" + both sides clear, RIGHT has more space, no edges → {"friction_type":"none","text":"Navigating around the right side","confidence":"high","actions":[{"action":"turn_right","turn_degrees":30},{"action":"forward","distance":1.4},{"action":"turn_left","turn_degrees":55},{"action":"forward","distance":0.8}]}
 - "go around the obstacle" + both sides clear, LEFT has more space, no edges → {"friction_type":"none","text":"Navigating around the left side","confidence":"high","actions":[{"action":"turn_left","turn_degrees":28},{"action":"forward","distance":1.3},{"action":"turn_right","turn_degrees":52},{"action":"forward","distance":0.9}]}
 - "go around it to the left" + user explicitly specifies left, no edge hazards → {"friction_type":"none","text":"Going around the left side","confidence":"high","actions":[{"action":"turn_left","turn_degrees":25},{"action":"forward","distance":1.2},{"action":"turn_right","turn_degrees":50},{"action":"forward","distance":0.8}]}
+- "stop at it" + no edge hazards → {"friction_type":"none","text":"Ok, I'll stop at the obstacle's location","confidence":"high","action":"forward","distance":1.8]}
 
 ## Clear Path Navigation:
 - "go to plant" + one plant, clear path, no edge hazards → {"friction_type":"none","action":"spatial_navigate","target_object":"plant","distance":2.0,"turn_degrees":5,"text":"","clarification_needed":null,"confidence":"high"}
