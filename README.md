@@ -1,1 +1,1 @@
-![Misty Robot](demo/misty.png)
+![Misty Robot](demo/main_graph.png)
